@@ -224,14 +224,20 @@ function syncLayerTools() {
   $('#restoreBackground').classList.toggle('hidden', !l.cutout);
   const anime=selectedCutoutMode()==='anime';
   $('#removeBackgroundAI').textContent=l.cutout
-    ?(anime?'全身を精密AIで切り抜き直す':'写真向けAIでやり直す')
-    :(anime?'髪から体まで精密に切り抜く':'写真・人物を切り抜く');
+    ?(anime?'全身を優先して切り抜き直す':'写真向けAIでやり直す')
+    :(anime?'全身を優先して切り抜く':'写真・人物を切り抜く');
   $('#removeBackgroundAI').disabled=cutoutBusy;
   $('#refineCutout').disabled=cutoutBusy;
   $('#restoreBackground').disabled=cutoutBusy;
   if(!cutoutBusy) {
     setCutoutStatus(
-      l.cutout?'髪・服・体が消えたら「消えた部分を精密補正」で元画像から戻せます':(anime?'イラストやVTuberの全身立ち絵におすすめです':'写真や人物画像におすすめです'),
+      l.cutout
+        ?'髪・服・体が消えたら「消えた部分を精密補正」で元画像から戻せます'
+        :(anime
+          ?(selectedCutoutRetention()==='body'
+            ?'服や体を広めに残します。背景が残った部分だけ精密補正で消せます'
+            :'背景を優先してすっきり切り抜きます')
+          :'写真や人物画像におすすめです'),
       l.cutout?'success':''
     )
   }
@@ -449,15 +455,32 @@ function setCutoutStatus(message, type='') {
 function selectedCutoutMode() {
   return document.querySelector('input[name="cutoutMode"]:checked')?.value||'anime'
 }
+function selectedCutoutRetention() {
+  return document.querySelector('input[name="cutoutRetention"]:checked')?.value||'body'
+}
+function syncCutoutRetention() {
+  all('.cutout-retention-option').forEach(label=> {
+    label.classList.toggle('active', label.querySelector('input').checked)
+  });
+  if(selectedCutoutMode()==='anime'&&!cutoutBusy) {
+    setCutoutStatus(
+      selectedCutoutRetention()==='body'
+        ?'服や体を広めに残します。背景が残った部分だけ精密補正で消せます'
+        :'背景を優先してすっきり切り抜きます。消えた部分は精密補正で戻せます'
+    )
+  }
+}
 function syncCutoutMode() {
   const anime=selectedCutoutMode()==='anime';
   all('.cutout-model').forEach(label=> {
     label.classList.toggle('active', label.querySelector('input').checked)
   });
+  $('#animeRetention').classList.toggle('hidden', !anime);
   $('#cutoutModeNote').textContent=anime
-    ?'髪だけでなく服・体まで判定します。初回のみ約180MBを読み込むため、Wi-Fiがおすすめです。'
+    ?'全身優先では、背景を少し残してでも髪・服・体を残しやすくします。初回のみ約180MBを読み込みます。'
     :'軽くて速い写真向けAIです。髪や服が消えた場合は精密補正で戻せます。';
-  syncLayerTools()
+  syncLayerTools();
+  if(anime)syncCutoutRetention()
 }
 function setCutoutBusy(busy) {
   cutoutBusy=busy;
@@ -466,6 +489,9 @@ function setCutoutBusy(busy) {
   $('#refineCutout').disabled=busy;
   $('#restoreBackground').disabled=busy;
   all('input[name="cutoutMode"]').forEach(input=> {
+    input.disabled=busy
+  });
+  all('input[name="cutoutRetention"]').forEach(input=> {
     input.disabled=busy
   })
 }
@@ -601,7 +627,13 @@ async function releaseAnimeBackgroundRemoval(segmenter) {
     animeBackgroundRemovalLoader=null
   }
 }
-function maskToAlphaCanvas(mask) {
+function bodySafeAlpha(value) {
+  if(value<=2)return 0;
+  const confidence=clamp((value-2)/46, 0, 1);
+  const eased=confidence*confidence*(3-2*confidence);
+  return Math.max(value, Math.round(eased*255))
+}
+function maskToAlphaCanvas(mask, retainBody=false) {
   const width=Number(mask?.width);
   const height=Number(mask?.height);
   if(!width||!height)throw new Error('イラスト精密AIのマスクサイズを取得できませんでした');
@@ -630,7 +662,8 @@ function maskToAlphaCanvas(mask) {
         const suppliedAlpha=channels>=4?Number(sourceData[sourceIndex+3]):255;
         value=suppliedAlpha<255?suppliedAlpha:(red+green+blue)/3
       }
-      const alpha=clamp(Math.round((Number(value)||0)*multiplier), 0, 255);
+      const rawAlpha=clamp(Math.round((Number(value)||0)*multiplier), 0, 255);
+      const alpha=retainBody?bodySafeAlpha(rawAlpha):rawAlpha;
       const targetIndex=pixel*4;
       alphaImage.data[targetIndex]=255;
       alphaImage.data[targetIndex+1]=255;
@@ -650,13 +683,14 @@ function maskToAlphaCanvas(mask) {
     pixels.data[index]=255;
     pixels.data[index+1]=255;
     pixels.data[index+2]=255;
-    pixels.data[index+3]=suppliedAlpha<255?suppliedAlpha:luminance
+    const rawAlpha=suppliedAlpha<255?suppliedAlpha:luminance;
+    pixels.data[index+3]=retainBody?bodySafeAlpha(rawAlpha):rawAlpha
   }
   alphaContext.putImageData(pixels, 0, 0);
   return alphaCanvas
 }
-function applySegmentationMask(source, mask) {
-  const alpha=maskToAlphaCanvas(mask);
+function applySegmentationMask(source, mask, retainBody=false) {
+  const alpha=maskToAlphaCanvas(mask, retainBody);
   const result=document.createElement('canvas');
   result.width=source.width;
   result.height=source.height;
@@ -670,16 +704,22 @@ function applySegmentationMask(source, mask) {
   return result
 }
 async function runAnimeCutout(processingCanvas) {
+  const retainBody=selectedCutoutRetention()==='body';
   const [segmenter, inputBlob]=await Promise.all([
     getAnimeBackgroundRemoval(),
     canvasToBlob(processingCanvas)
   ]);
   const objectUrl=URL.createObjectURL(inputBlob);
   try {
-    setCutoutStatus('髪から服・体まで、全身の輪郭を精密に判定しています…', 'loading');
+    setCutoutStatus(
+      retainBody
+        ?'服や体を消しすぎないよう、全身を広めに判定しています…'
+        :'背景を優先して輪郭を精密に判定しています…',
+      'loading'
+    );
     const output=await segmenter(objectUrl, {
       threshold:0,
-      mask_threshold:.22,
+      mask_threshold:retainBody ? .04 : .22,
       target_sizes:[[processingCanvas.height, processingCanvas.width]]
     });
     const segment=Array.isArray(output)
@@ -687,7 +727,7 @@ async function runAnimeCutout(processingCanvas) {
       :output;
     const mask=segment?.mask||segment;
     if(!mask)throw new Error('イラスト精密AIの結果を取得できませんでした');
-    return canvasToBlob(applySegmentationMask(processingCanvas, mask))
+    return canvasToBlob(applySegmentationMask(processingCanvas, mask, retainBody))
   }
   finally {
     URL.revokeObjectURL(objectUrl);
@@ -757,7 +797,13 @@ async function removeSelectedLayerBackground() {
     renderLayers();
     draw();
     completion= {
-      message:fallback?'写真向けAIで切り抜きました。消えた体や服は精密補正で戻せます':(mode==='anime'?'イラスト精密AIで髪から体まで切り抜きました。必要なら精密補正できます':'背景を削除しました。消えた部分は精密補正で戻せます'),
+      message:fallback
+        ?'写真向けAIで切り抜きました。消えた体や服は精密補正で戻せます'
+        :(mode==='anime'
+          ?(selectedCutoutRetention()==='body'
+            ?'全身を広めに残して切り抜きました。残った背景は精密補正で消せます'
+            :'背景を優先して切り抜きました。消えた部分は精密補正で戻せます')
+          :'背景を削除しました。消えた部分は精密補正で戻せます'),
       type:'success'
     }
   }
@@ -776,6 +822,9 @@ async function removeSelectedLayerBackground() {
 $('#removeBackgroundAI').onclick=removeSelectedLayerBackground;
 all('input[name="cutoutMode"]').forEach(input=> {
   input.onchange=syncCutoutMode
+});
+all('input[name="cutoutRetention"]').forEach(input=> {
+  input.onchange=syncCutoutRetention
 });
 $('#restoreBackground').onclick=()=> {
   const layer=selectedLayer();

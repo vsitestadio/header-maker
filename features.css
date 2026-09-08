@@ -220,6 +220,71 @@
   cursor:wait;
   opacity:.58
 }
+.cutout-retention {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:7px;
+  margin:10px 0 0;
+  padding:9px;
+  border:1px solid #d7e8ee;
+  border-radius:11px;
+  background:#fff
+}
+.cutout-retention legend {
+  grid-column:1/-1;
+  padding:0 3px;
+  color:#49606d;
+  font-size:10px;
+  font-weight:900
+}
+.cutout-retention-option {
+  display:block;
+  position:relative;
+  min-width:0;
+  cursor:pointer
+}
+.cutout-retention-option input {
+  position:absolute;
+  width:1px;
+  height:1px;
+  opacity:0;
+  pointer-events:none
+}
+.cutout-retention-option span {
+  display:flex;
+  min-height:52px;
+  padding:8px;
+  flex-direction:column;
+  justify-content:center;
+  gap:2px;
+  border:1px solid #d4e2e8;
+  border-radius:9px;
+  color:#435b67;
+  background:#f9fcfd
+}
+.cutout-retention-option b {
+  font-size:10px;
+  line-height:1.35
+}
+.cutout-retention-option small {
+  color:#758995;
+  font-size:8px;
+  line-height:1.4
+}
+.cutout-retention-option.active span {
+  border-color:#12b8da;
+  color:#087f9e;
+  background:#effcff;
+  box-shadow:0 0 0 2px rgba(18,184,218,.1)
+}
+.cutout-retention-option input:focus-visible+span {
+  outline:3px solid rgba(18,184,218,.28);
+  outline-offset:2px
+}
+.cutout-retention-option input:disabled+span {
+  cursor:wait;
+  opacity:.58
+}
 .cutout-mode-note {
   margin:7px 1px 0;
   color:#6f838f;
