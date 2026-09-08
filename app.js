@@ -224,14 +224,14 @@ function syncLayerTools() {
   $('#restoreBackground').classList.toggle('hidden', !l.cutout);
   const anime=selectedCutoutMode()==='anime';
   $('#removeBackgroundAI').textContent=l.cutout
-    ?(anime?'イラスト精密AIでやり直す':'写真向けAIでやり直す')
-    :(anime?'イラストを精密に切り抜く':'写真・人物を切り抜く');
+    ?(anime?'全身を精密AIで切り抜き直す':'写真向けAIでやり直す')
+    :(anime?'髪から体まで精密に切り抜く':'写真・人物を切り抜く');
   $('#removeBackgroundAI').disabled=cutoutBusy;
   $('#refineCutout').disabled=cutoutBusy;
   $('#restoreBackground').disabled=cutoutBusy;
   if(!cutoutBusy) {
     setCutoutStatus(
-      l.cutout?'髪や服が消えたら「消えた部分を精密補正」で元画像から戻せます':(anime?'イラストやVTuberの立ち絵におすすめです':'写真や人物画像におすすめです'),
+      l.cutout?'髪・服・体が消えたら「消えた部分を精密補正」で元画像から戻せます':(anime?'イラストやVTuberの全身立ち絵におすすめです':'写真や人物画像におすすめです'),
       l.cutout?'success':''
     )
   }
@@ -455,7 +455,7 @@ function syncCutoutMode() {
     label.classList.toggle('active', label.querySelector('input').checked)
   });
   $('#cutoutModeNote').textContent=anime
-    ?'精密AIは初回のみ約180MBを読み込みます。Wi-Fiでの利用がおすすめです。'
+    ?'髪だけでなく服・体まで判定します。初回のみ約180MBを読み込むため、Wi-Fiがおすすめです。'
     :'軽くて速い写真向けAIです。髪や服が消えた場合は精密補正で戻せます。';
   syncLayerTools()
 }
@@ -569,7 +569,7 @@ async function createAnimeBackgroundRemoval() {
   };
   if(navigator.gpu) {
     try {
-      return await module.pipeline('background-removal', animeCutoutModel, {
+      return await module.pipeline('image-segmentation', animeCutoutModel, {
         ...options,
         device:'webgpu'
       })
@@ -578,10 +578,7 @@ async function createAnimeBackgroundRemoval() {
       console.warn('WebGPU cutout unavailable. Falling back to WASM.', error)
     }
   }
-  return module.pipeline('background-removal', animeCutoutModel, {
-    ...options,
-    device:'wasm'
-  })
+  return module.pipeline('image-segmentation', animeCutoutModel, options)
 }
 async function getAnimeBackgroundRemoval() {
   if(!animeBackgroundRemovalLoader) {
@@ -604,6 +601,74 @@ async function releaseAnimeBackgroundRemoval(segmenter) {
     animeBackgroundRemovalLoader=null
   }
 }
+function maskToAlphaCanvas(mask) {
+  const width=Number(mask?.width);
+  const height=Number(mask?.height);
+  if(!width||!height)throw new Error('イラスト精密AIのマスクサイズを取得できませんでした');
+  const alphaCanvas=document.createElement('canvas');
+  alphaCanvas.width=width;
+  alphaCanvas.height=height;
+  const alphaContext=alphaCanvas.getContext('2d');
+  const alphaImage=alphaContext.createImageData(width, height);
+  const sourceData=mask.data;
+  if(sourceData&&sourceData.length>=width*height) {
+    const channels=Math.max(1, Math.round(sourceData.length/(width*height)));
+    let maximum=0;
+    for(let index=0; index<sourceData.length; index+=channels) {
+      maximum=Math.max(maximum, Number(sourceData[index])||0)
+    }
+    const multiplier=maximum<=1?255:1;
+    for(let pixel=0; pixel<width*height; pixel++) {
+      const sourceIndex=pixel*channels;
+      let value;
+      if(channels===1) {
+        value=sourceData[sourceIndex]
+      } else {
+        const red=Number(sourceData[sourceIndex])||0;
+        const green=Number(sourceData[sourceIndex+1])||red;
+        const blue=Number(sourceData[sourceIndex+2])||red;
+        const suppliedAlpha=channels>=4?Number(sourceData[sourceIndex+3]):255;
+        value=suppliedAlpha<255?suppliedAlpha:(red+green+blue)/3
+      }
+      const alpha=clamp(Math.round((Number(value)||0)*multiplier), 0, 255);
+      const targetIndex=pixel*4;
+      alphaImage.data[targetIndex]=255;
+      alphaImage.data[targetIndex+1]=255;
+      alphaImage.data[targetIndex+2]=255;
+      alphaImage.data[targetIndex+3]=alpha
+    }
+    alphaContext.putImageData(alphaImage, 0, 0);
+    return alphaCanvas
+  }
+  if(typeof mask.toCanvas!=='function')throw new Error('イラスト精密AIのマスクを画像に変換できませんでした');
+  const maskCanvas=mask.toCanvas();
+  alphaContext.drawImage(maskCanvas, 0, 0, width, height);
+  const pixels=alphaContext.getImageData(0, 0, width, height);
+  for(let index=0; index<pixels.data.length; index+=4) {
+    const suppliedAlpha=pixels.data[index+3];
+    const luminance=Math.round((pixels.data[index]+pixels.data[index+1]+pixels.data[index+2])/3);
+    pixels.data[index]=255;
+    pixels.data[index+1]=255;
+    pixels.data[index+2]=255;
+    pixels.data[index+3]=suppliedAlpha<255?suppliedAlpha:luminance
+  }
+  alphaContext.putImageData(pixels, 0, 0);
+  return alphaCanvas
+}
+function applySegmentationMask(source, mask) {
+  const alpha=maskToAlphaCanvas(mask);
+  const result=document.createElement('canvas');
+  result.width=source.width;
+  result.height=source.height;
+  const resultContext=result.getContext('2d');
+  resultContext.drawImage(source, 0, 0);
+  resultContext.globalCompositeOperation='destination-in';
+  resultContext.imageSmoothingEnabled=true;
+  resultContext.imageSmoothingQuality='high';
+  resultContext.drawImage(alpha, 0, 0, result.width, result.height);
+  resultContext.globalCompositeOperation='source-over';
+  return result
+}
 async function runAnimeCutout(processingCanvas) {
   const [segmenter, inputBlob]=await Promise.all([
     getAnimeBackgroundRemoval(),
@@ -611,13 +676,18 @@ async function runAnimeCutout(processingCanvas) {
   ]);
   const objectUrl=URL.createObjectURL(inputBlob);
   try {
-    setCutoutStatus('イラストの髪・服・細い線を精密に判定しています…', 'loading');
-    const output=await segmenter(objectUrl);
-    const result=Array.isArray(output)?output[0]:output;
-    if(!result)throw new Error('イラスト精密AIの結果を取得できませんでした');
-    if(typeof result.toBlob==='function')return await result.toBlob();
-    if(typeof result.toCanvas==='function')return canvasToBlob(result.toCanvas());
-    throw new Error('イラスト精密AIの結果を画像に変換できませんでした')
+    setCutoutStatus('髪から服・体まで、全身の輪郭を精密に判定しています…', 'loading');
+    const output=await segmenter(objectUrl, {
+      threshold:0,
+      mask_threshold:.22,
+      target_sizes:[[processingCanvas.height, processingCanvas.width]]
+    });
+    const segment=Array.isArray(output)
+      ?output.find(item=>item?.mask)||output[0]
+      :output;
+    const mask=segment?.mask||segment;
+    if(!mask)throw new Error('イラスト精密AIの結果を取得できませんでした');
+    return canvasToBlob(applySegmentationMask(processingCanvas, mask))
   }
   finally {
     URL.revokeObjectURL(objectUrl);
@@ -687,7 +757,7 @@ async function removeSelectedLayerBackground() {
     renderLayers();
     draw();
     completion= {
-      message:fallback?'写真向けAIで切り抜きました。消えた部分は精密補正で戻せます':(mode==='anime'?'イラスト精密AIで切り抜きました。消えた部分は精密補正で戻せます':'背景を削除しました。消えた部分は精密補正で戻せます'),
+      message:fallback?'写真向けAIで切り抜きました。消えた体や服は精密補正で戻せます':(mode==='anime'?'イラスト精密AIで髪から体まで切り抜きました。必要なら精密補正できます':'背景を削除しました。消えた部分は精密補正で戻せます'),
       type:'success'
     }
   }
@@ -729,6 +799,10 @@ const refineState= {
   previous:null,
   next:null,
   drawing:false,
+  pointers:new Map(),
+  pan:null,
+  strokeStart:null,
+  undoBeforeStroke:null,
   mode:'erase',
   reference:false,
   lastPoint:null,
@@ -793,6 +867,10 @@ function openRefineEditor() {
   refineState.previous=null;
   refineState.next=null;
   refineState.drawing=false;
+  refineState.pointers.clear();
+  refineState.pan=null;
+  refineState.strokeStart=null;
+  refineState.undoBeforeStroke=null;
   refineState.lastPoint=null;
   refineCanvas.width=layer.img.width;
   refineCanvas.height=layer.img.height;
@@ -867,11 +945,12 @@ function paintRefineSegment(from, to) {
 function startRefineStroke(event) {
   if(refineState.drawing)return;
   event.preventDefault();
-  refineState.previous=cloneCanvas(refineCanvas);
+  refineState.undoBeforeStroke=refineState.previous;
+  refineState.strokeStart=cloneCanvas(refineCanvas);
+  refineState.previous=refineState.strokeStart;
   refineState.next=null;
   syncRefineHistoryButtons();
   refineState.drawing=true;
-  refineCanvas.setPointerCapture?.(event.pointerId);
   refineState.lastPoint=refinePoint(event);
   paintRefineSegment(refineState.lastPoint, refineState.lastPoint)
 }
@@ -886,7 +965,81 @@ function endRefineStroke(event) {
   if(!refineState.drawing)return;
   event.preventDefault();
   refineState.drawing=false;
-  refineState.lastPoint=null
+  refineState.lastPoint=null;
+  refineState.strokeStart=null;
+  refineState.undoBeforeStroke=null
+}
+function restoreCanvasSnapshot(snapshot) {
+  if(!snapshot)return;
+  refineContext.clearRect(0, 0, refineCanvas.width, refineCanvas.height);
+  refineContext.drawImage(snapshot, 0, 0)
+}
+function cancelStrokeForPan() {
+  if(!refineState.drawing)return;
+  restoreCanvasSnapshot(refineState.strokeStart);
+  refineState.previous=refineState.undoBeforeStroke;
+  refineState.next=null;
+  refineState.drawing=false;
+  refineState.lastPoint=null;
+  refineState.strokeStart=null;
+  refineState.undoBeforeStroke=null;
+  syncRefineHistoryButtons()
+}
+function refinePointerCenter() {
+  const points=[...refineState.pointers.values()];
+  const total=points.reduce((sum, point)=>({x:sum.x+point.x, y:sum.y+point.y}), {x:0, y:0});
+  return {
+    x:total.x/points.length,
+    y:total.y/points.length
+  }
+}
+function startRefinePointer(event) {
+  event.preventDefault();
+  const stage=$('#refineStage');
+  stage.setPointerCapture?.(event.pointerId);
+  refineState.pointers.set(event.pointerId, {x:event.clientX, y:event.clientY});
+  if(refineState.pointers.size>=2) {
+    cancelStrokeForPan();
+    const center=refinePointerCenter();
+    refineState.pan= {
+      x:center.x,
+      y:center.y,
+      scrollLeft:stage.scrollLeft,
+      scrollTop:stage.scrollTop
+    };
+    stage.classList.add('panning');
+    return
+  }
+  if(event.target===refineCanvas)startRefineStroke(event)
+}
+function moveRefinePointer(event) {
+  if(!refineState.pointers.has(event.pointerId))return;
+  event.preventDefault();
+  refineState.pointers.set(event.pointerId, {x:event.clientX, y:event.clientY});
+  if(refineState.pan&&refineState.pointers.size>=2) {
+    const stage=$('#refineStage');
+    const center=refinePointerCenter();
+    stage.scrollLeft=refineState.pan.scrollLeft-(center.x-refineState.pan.x);
+    stage.scrollTop=refineState.pan.scrollTop-(center.y-refineState.pan.y);
+    return
+  }
+  if(refineState.drawing&&refineState.pointers.size===1)moveRefineStroke(event)
+}
+function endRefinePointer(event) {
+  if(!refineState.pointers.has(event.pointerId))return;
+  event.preventDefault();
+  const wasPanning=Boolean(refineState.pan);
+  refineState.pointers.delete(event.pointerId);
+  if(wasPanning) {
+    if(refineState.pointers.size<2) {
+      refineState.pan=null;
+      refineState.drawing=false;
+      refineState.lastPoint=null;
+      $('#refineStage').classList.remove('panning')
+    }
+    return
+  }
+  endRefineStroke(event)
 }
 function closeRefineEditor() {
   $('#refineDialog').close()
@@ -940,16 +1093,21 @@ $('#refineDialog').addEventListener('close', ()=> {
   refineState.previous=null;
   refineState.next=null;
   refineState.drawing=false;
+  refineState.pointers.clear();
+  refineState.pan=null;
+  refineState.strokeStart=null;
+  refineState.undoBeforeStroke=null;
   refineState.reference=false;
-  refineState.lastPoint=null
+  refineState.lastPoint=null;
+  $('#refineStage').classList.remove('panning')
 });
 $('#refineDialog').addEventListener('click', event=> {
   if(event.target===$('#refineDialog'))closeRefineEditor()
 });
-refineCanvas.addEventListener('pointerdown', startRefineStroke, {passive:false});
-refineCanvas.addEventListener('pointermove', moveRefineStroke, {passive:false});
-refineCanvas.addEventListener('pointerup', endRefineStroke, {passive:false});
-refineCanvas.addEventListener('pointercancel', endRefineStroke, {passive:false});
+$('#refineStage').addEventListener('pointerdown', startRefinePointer, {passive:false});
+$('#refineStage').addEventListener('pointermove', moveRefinePointer, {passive:false});
+$('#refineStage').addEventListener('pointerup', endRefinePointer, {passive:false});
+$('#refineStage').addEventListener('pointercancel', endRefinePointer, {passive:false});
 window.addEventListener('resize', ()=> {
   if($('#refineDialog').open)sizeRefineCanvas()
 });
