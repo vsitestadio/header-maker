@@ -35,7 +35,7 @@ body {
   align-items:center;
   gap:10px;
   color:var(--ink);
-  font-size:18px;
+  font-size:20px;
   font-weight:800;
   text-decoration:none
 }
@@ -250,7 +250,7 @@ body {
   background:none;
   color:#a04c4c;
   font:inherit;
-  font-size:11px;
+  font-size:13px;
   cursor:pointer
 }
 .hidden {
@@ -451,3 +451,4 @@ canvas.dragging {
     min-height:44px
   }
 }
+
