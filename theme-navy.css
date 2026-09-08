@@ -51,6 +51,9 @@ body {
 .step small,.templates-head small,.preview-head small,.platform small {
   color:#718190
 }
+.step .note{
+  color: #078dad;
+}
 .platform,.input-field input,.select-field select,.transform-buttons button,.layer-item {
   color:#1c2b38;
   background:#fff;
@@ -173,8 +176,13 @@ body {
   border-color:#51cde6
 }
 .share-button {
+  color:#172331;
+  background:#f4f8fa;
+  border-color:#d8e4eb
+}
+.x-share-button {
   color:#fff;
-  background:#172331
+  background:#050505
 }
 @media(max-width:600px) {
   body {
