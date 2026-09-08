@@ -17,7 +17,10 @@ const state= {
 const clamp=(v, min, max)=>Math.max(min, Math.min(max, v));
 const selectedLayer=()=>state.layers.find(l=>l.id===state.selected)||null;
 const backgroundRemovalModule='https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm';
+const transformersModule='https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0';
+const animeCutoutModel='BritishWerewolf/IS-Net-Anime';
 let backgroundRemovalLoader=null;
+let animeBackgroundRemovalLoader=null;
 let cutoutBusy=false;
 function fontName() {
   return state.text.font==='serif'?'"Yu Mincho",serif':state.text.font==='round'?'"Hiragino Maru Gothic ProN","Yu Gothic",sans-serif':'"Noto Sans JP","Yu Gothic",sans-serif'
@@ -219,13 +222,16 @@ function syncLayerTools() {
   $('#rotationOut').value=Math.round(l.rotation)+'°';
   $('#refineCutout').classList.toggle('hidden', !l.cutout);
   $('#restoreBackground').classList.toggle('hidden', !l.cutout);
-  $('#removeBackgroundAI').textContent=l.cutout?'高精度でやり直す':'高精度AIで背景を削除';
+  const anime=selectedCutoutMode()==='anime';
+  $('#removeBackgroundAI').textContent=l.cutout
+    ?(anime?'イラスト精密AIでやり直す':'写真向けAIでやり直す')
+    :(anime?'イラストを精密に切り抜く':'写真・人物を切り抜く');
   $('#removeBackgroundAI').disabled=cutoutBusy;
   $('#refineCutout').disabled=cutoutBusy;
   $('#restoreBackground').disabled=cutoutBusy;
   if(!cutoutBusy) {
     setCutoutStatus(
-      l.cutout?'背景が残ったら「細かく修正」でなぞって消せます':'人物・キャラクター画像におすすめです',
+      l.cutout?'髪や服が消えたら「消えた部分を精密補正」で元画像から戻せます':(anime?'イラストやVTuberの立ち絵におすすめです':'写真や人物画像におすすめです'),
       l.cutout?'success':''
     )
   }
@@ -440,12 +446,28 @@ function setCutoutStatus(message, type='') {
   $('#cutoutStatus').textContent=message;
   $('#cutoutStatus').className='cutout-status'+(type?' '+type:'')
 }
+function selectedCutoutMode() {
+  return document.querySelector('input[name="cutoutMode"]:checked')?.value||'anime'
+}
+function syncCutoutMode() {
+  const anime=selectedCutoutMode()==='anime';
+  all('.cutout-model').forEach(label=> {
+    label.classList.toggle('active', label.querySelector('input').checked)
+  });
+  $('#cutoutModeNote').textContent=anime
+    ?'精密AIは初回のみ約180MBを読み込みます。Wi-Fiでの利用がおすすめです。'
+    :'軽くて速い写真向けAIです。髪や服が消えた場合は精密補正で戻せます。';
+  syncLayerTools()
+}
 function setCutoutBusy(busy) {
   cutoutBusy=busy;
   $('#layerTools').setAttribute('aria-busy', String(busy));
   $('#removeBackgroundAI').disabled=busy;
   $('#refineCutout').disabled=busy;
-  $('#restoreBackground').disabled=busy
+  $('#restoreBackground').disabled=busy;
+  all('input[name="cutoutMode"]').forEach(input=> {
+    input.disabled=busy
+  })
 }
 function makeProcessingCanvas(source) {
   const sourceWidth=source.naturalWidth||source.width;
@@ -492,6 +514,24 @@ function blobToCanvas(blob) {
     image.src=objectUrl
   })
 }
+function cutoutAtSourceResolution(cutout, source) {
+  const width=source.naturalWidth||source.width;
+  const height=source.naturalHeight||source.height;
+  if(cutout.width===width&&cutout.height===height)return cutout;
+  const mask=document.createElement('canvas');
+  mask.width=width;
+  mask.height=height;
+  mask.getContext('2d').drawImage(cutout, 0, 0, width, height);
+  const result=document.createElement('canvas');
+  result.width=width;
+  result.height=height;
+  const resultContext=result.getContext('2d');
+  resultContext.drawImage(source, 0, 0, width, height);
+  resultContext.globalCompositeOperation='destination-in';
+  resultContext.drawImage(mask, 0, 0);
+  resultContext.globalCompositeOperation='source-over';
+  return result
+}
 async function getBackgroundRemoval() {
   if(!backgroundRemovalLoader) {
     backgroundRemovalLoader=import(backgroundRemovalModule)
@@ -506,6 +546,93 @@ async function getBackgroundRemoval() {
       })
   }
   return backgroundRemovalLoader
+}
+function updateAnimeCutoutProgress(event) {
+  if(!event)return;
+  const progress=$('#cutoutProgress');
+  const value=Number.isFinite(event.progress)
+    ?clamp(Math.round(event.progress), 0, 100)
+    :(event.total>0?clamp(Math.round(event.loaded/event.total*100), 0, 100):null);
+  if(event.status==='progress'||event.status==='download'||event.status==='initiate') {
+    progress.classList.remove('hidden');
+    if(value===null)progress.removeAttribute('value');
+    else progress.value=value;
+    setCutoutStatus(`イラスト精密AIを読み込み中${value===null?'…':`… ${value}%`}`, 'loading')
+  }
+}
+async function createAnimeBackgroundRemoval() {
+  const module=await import(transformersModule);
+  if(typeof module.pipeline!=='function')throw new Error('イラスト精密AIを読み込めませんでした');
+  const options= {
+    dtype:'fp32',
+    progress_callback:updateAnimeCutoutProgress
+  };
+  if(navigator.gpu) {
+    try {
+      return await module.pipeline('background-removal', animeCutoutModel, {
+        ...options,
+        device:'webgpu'
+      })
+    }
+    catch(error) {
+      console.warn('WebGPU cutout unavailable. Falling back to WASM.', error)
+    }
+  }
+  return module.pipeline('background-removal', animeCutoutModel, {
+    ...options,
+    device:'wasm'
+  })
+}
+async function getAnimeBackgroundRemoval() {
+  if(!animeBackgroundRemovalLoader) {
+    animeBackgroundRemovalLoader=createAnimeBackgroundRemoval().catch(error=> {
+      animeBackgroundRemovalLoader=null;
+      throw error
+    })
+  }
+  return animeBackgroundRemovalLoader
+}
+async function releaseAnimeBackgroundRemoval(segmenter) {
+  if(!window.matchMedia('(max-width: 700px)').matches)return;
+  try {
+    if(typeof segmenter?.dispose==='function')await segmenter.dispose()
+  }
+  catch(error) {
+    console.warn('Could not release the precision cutout model.', error)
+  }
+  finally {
+    animeBackgroundRemovalLoader=null
+  }
+}
+async function runAnimeCutout(processingCanvas) {
+  const [segmenter, inputBlob]=await Promise.all([
+    getAnimeBackgroundRemoval(),
+    canvasToBlob(processingCanvas)
+  ]);
+  const objectUrl=URL.createObjectURL(inputBlob);
+  try {
+    setCutoutStatus('イラストの髪・服・細い線を精密に判定しています…', 'loading');
+    const output=await segmenter(objectUrl);
+    const result=Array.isArray(output)?output[0]:output;
+    if(!result)throw new Error('イラスト精密AIの結果を取得できませんでした');
+    if(typeof result.toBlob==='function')return await result.toBlob();
+    if(typeof result.toCanvas==='function')return canvasToBlob(result.toCanvas());
+    throw new Error('イラスト精密AIの結果を画像に変換できませんでした')
+  }
+  finally {
+    URL.revokeObjectURL(objectUrl);
+    await releaseAnimeBackgroundRemoval(segmenter)
+  }
+}
+async function runPhotoCutout(processingCanvas) {
+  const [removeBackground, inputBlob]=await Promise.all([
+    getBackgroundRemoval(),
+    canvasToBlob(processingCanvas)
+  ]);
+  return removeBackground(inputBlob, {
+    model:'isnet_fp16',
+    progress:updateCutoutProgress
+  })
 }
 function updateCutoutProgress(key, current, total) {
   const progress=$('#cutoutProgress');
@@ -523,34 +650,46 @@ async function removeSelectedLayerBackground() {
   const layer=selectedLayer();
   if(!layer||cutoutBusy)return;
   const layerId=layer.id;
+  const mode=selectedCutoutMode();
   const progress=$('#cutoutProgress');
   let completion=null;
   setCutoutBusy(true);
   progress.classList.remove('hidden');
   progress.removeAttribute('value');
-  setCutoutStatus('高精度AIを準備しています。初回のみ少し時間がかかります…', 'loading');
+  setCutoutStatus(mode==='anime'?'イラスト精密AIを準備しています。初回は時間がかかります…':'写真向けAIを準備しています。初回のみ少し時間がかかります…', 'loading');
   try {
-    const processingCanvas=makeProcessingCanvas(layer.originalImg||layer.img);
-    const [removeBackground, inputBlob]=await Promise.all([
-      getBackgroundRemoval(),
-      canvasToBlob(processingCanvas)
-    ]);
-    const resultBlob=await removeBackground(inputBlob, {
-      model:'isnet_fp16',
-      progress:updateCutoutProgress
-    });
+    const sourceCanvas=layer.originalImg||layer.img;
+    const processingCanvas=makeProcessingCanvas(sourceCanvas);
+    let resultBlob;
+    let fallback=false;
+    if(mode==='anime') {
+      try {
+        resultBlob=await runAnimeCutout(processingCanvas)
+      }
+      catch(error) {
+        console.error('Precision anime background removal failed:', error);
+        setCutoutStatus('精密AIを利用できないため、写真向けAIに切り替えています…', 'loading');
+        resultBlob=await runPhotoCutout(processingCanvas);
+        fallback=true
+      }
+    } else {
+      resultBlob=await runPhotoCutout(processingCanvas)
+    }
     progress.value=100;
     setCutoutStatus('透明な画像に仕上げています…', 'loading');
-    const resultCanvas=await blobToCanvas(resultBlob);
+    const resultCanvas=cutoutAtSourceResolution(await blobToCanvas(resultBlob), sourceCanvas);
     const target=state.layers.find(item=>item.id===layerId);
     if(!target)return;
     target.img=resultCanvas;
     target.url=makeThumbnail(resultCanvas);
     target.cutout=true;
-    target.cutoutSource=processingCanvas;
+    target.cutoutSource=sourceCanvas;
     renderLayers();
     draw();
-    completion={message:'背景を削除しました', type:'success'}
+    completion= {
+      message:fallback?'写真向けAIで切り抜きました。消えた部分は精密補正で戻せます':(mode==='anime'?'イラスト精密AIで切り抜きました。消えた部分は精密補正で戻せます':'背景を削除しました。消えた部分は精密補正で戻せます'),
+      type:'success'
+    }
   }
   catch(error) {
     console.error('Background removal failed:', error);
@@ -565,6 +704,9 @@ async function removeSelectedLayerBackground() {
   }
 }
 $('#removeBackgroundAI').onclick=removeSelectedLayerBackground;
+all('input[name="cutoutMode"]').forEach(input=> {
+  input.onchange=syncCutoutMode
+});
 $('#restoreBackground').onclick=()=> {
   const layer=selectedLayer();
   if(!layer||!layer.cutout||cutoutBusy)return;
@@ -578,6 +720,8 @@ $('#restoreBackground').onclick=()=> {
 };
 const refineCanvas=$('#refineCanvas');
 const refineContext=refineCanvas.getContext('2d');
+const refineReference=$('#refineReference');
+const refineReferenceContext=refineReference.getContext('2d');
 const restoreBrushCanvas=document.createElement('canvas');
 const refineState= {
   layerId:null,
@@ -586,6 +730,7 @@ const refineState= {
   next:null,
   drawing:false,
   mode:'erase',
+  reference:false,
   lastPoint:null,
   fitScale:1
 };
@@ -602,7 +747,15 @@ function setRefineMode(mode) {
   $('#eraseMode').classList.toggle('active', erase);
   $('#restoreMode').classList.toggle('active', !erase);
   $('#eraseMode').setAttribute('aria-pressed', String(erase));
-  $('#restoreMode').setAttribute('aria-pressed', String(!erase))
+  $('#restoreMode').setAttribute('aria-pressed', String(!erase));
+  if(!erase)setReferenceVisible(true)
+}
+function setReferenceVisible(visible) {
+  refineState.reference=visible;
+  refineReference.classList.toggle('visible', visible);
+  $('#referenceToggle').classList.toggle('active', visible);
+  $('#referenceToggle').setAttribute('aria-pressed', String(visible));
+  $('#referenceToggle').textContent=visible?'元画像を隠す':'元画像を重ねて確認'
 }
 function syncRefineHistoryButtons() {
   $('#undoRefine').disabled=!refineState.previous;
@@ -614,8 +767,11 @@ function sizeRefineCanvas() {
   const availableWidth=Math.max(120, stage.clientWidth-32);
   const zoom=Number($('#refineZoom').value)/100;
   refineState.fitScale=Math.min(1, availableWidth/refineCanvas.width);
-  refineCanvas.style.width=Math.round(refineCanvas.width*refineState.fitScale*zoom)+'px';
-  refineCanvas.style.height='auto'
+  const displayWidth=Math.round(refineCanvas.width*refineState.fitScale*zoom);
+  const displayHeight=Math.round(refineCanvas.height/refineCanvas.width*displayWidth);
+  const stack=$('#refineCanvasStack');
+  stack.style.width=displayWidth+'px';
+  stack.style.height=displayHeight+'px'
 }
 function sourceForRefine(layer) {
   if(
@@ -640,12 +796,17 @@ function openRefineEditor() {
   refineState.lastPoint=null;
   refineCanvas.width=layer.img.width;
   refineCanvas.height=layer.img.height;
+  refineReference.width=layer.img.width;
+  refineReference.height=layer.img.height;
   refineContext.clearRect(0, 0, refineCanvas.width, refineCanvas.height);
   refineContext.drawImage(layer.img, 0, 0);
+  refineReferenceContext.clearRect(0, 0, refineReference.width, refineReference.height);
+  refineReferenceContext.drawImage(refineState.source, 0, 0);
   syncRefineHistoryButtons();
   $('#refineZoom').value=100;
   $('#refineZoomOut').value='100%';
-  setRefineMode('erase');
+  setReferenceVisible(true);
+  setRefineMode('restore');
   $('#refineDialog').showModal();
   requestAnimationFrame(()=> {
     sizeRefineCanvas();
@@ -662,7 +823,8 @@ function refinePoint(event) {
 function paintEraseStamp(x, y, radius) {
   refineContext.save();
   refineContext.globalCompositeOperation='destination-out';
-  const gradient=refineContext.createRadialGradient(x, y, radius*.72, x, y, radius);
+  const hardness=clamp(Number($('#brushHardness').value)/100, .05, .995);
+  const gradient=refineContext.createRadialGradient(x, y, radius*hardness, x, y, radius);
   gradient.addColorStop(0, 'rgba(0,0,0,1)');
   gradient.addColorStop(1, 'rgba(0,0,0,0)');
   refineContext.fillStyle=gradient;
@@ -679,7 +841,8 @@ function paintRestoreStamp(x, y, radius) {
   const brushContext=restoreBrushCanvas.getContext('2d');
   brushContext.drawImage(refineState.source, center-x, center-y);
   brushContext.globalCompositeOperation='destination-in';
-  const gradient=brushContext.createRadialGradient(center, center, radius*.72, center, center, radius);
+  const hardness=clamp(Number($('#brushHardness').value)/100, .05, .995);
+  const gradient=brushContext.createRadialGradient(center, center, radius*hardness, center, center, radius);
   gradient.addColorStop(0, 'rgba(0,0,0,1)');
   gradient.addColorStop(1, 'rgba(0,0,0,0)');
   brushContext.fillStyle=gradient;
@@ -731,8 +894,12 @@ function closeRefineEditor() {
 $('#refineCutout').onclick=openRefineEditor;
 $('#eraseMode').onclick=()=>setRefineMode('erase');
 $('#restoreMode').onclick=()=>setRefineMode('restore');
+$('#referenceToggle').onclick=()=>setReferenceVisible(!refineState.reference);
 $('#brushSize').oninput=event=> {
   $('#brushSizeOut').value=event.target.value
+};
+$('#brushHardness').oninput=event=> {
+  $('#brushHardnessOut').value=event.target.value+'%'
 };
 $('#refineZoom').oninput=event=> {
   $('#refineZoomOut').value=event.target.value+'%';
@@ -773,6 +940,7 @@ $('#refineDialog').addEventListener('close', ()=> {
   refineState.previous=null;
   refineState.next=null;
   refineState.drawing=false;
+  refineState.reference=false;
   refineState.lastPoint=null
 });
 $('#refineDialog').addEventListener('click', event=> {

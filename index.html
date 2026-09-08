@@ -69,20 +69,40 @@
             <div class="cutout-heading">
               <span aria-hidden="true">✦</span>
               <div>
-                <b>高精度AI切り抜き</b>
-                <small>自動で切り抜いた後、指で細かく修正できます</small>
+                <b>AI背景切り抜き</b>
+                <small>画像に合うAIを選ぶと、髪や服の輪郭を残しやすくなります</small>
               </div>
             </div>
+            <fieldset class="cutout-models">
+              <legend>画像の種類</legend>
+              <label class="cutout-model active">
+                <input type="radio" name="cutoutMode" value="anime" checked>
+                <span>
+                  <b>イラスト・VTuber</b>
+                  <small>イラスト専用の精密AI</small>
+                </span>
+              </label>
+              <label class="cutout-model">
+                <input type="radio" name="cutoutMode" value="photo">
+                <span>
+                  <b>写真・人物</b>
+                  <small>軽くて速い標準AI</small>
+                </span>
+              </label>
+            </fieldset>
+            <p id="cutoutModeNote" class="cutout-mode-note">精密AIは初回のみ約180MBを読み込みます。Wi-Fiでの利用がおすすめです。</p>
             <div class="cutout-actions">
-              <button id="removeBackgroundAI" class="cutout-button" type="button">高精度AIで背景を削除</button>
-              <button id="refineCutout" class="refine-cutout-button hidden" type="button">細かく修正</button>
+              <button id="removeBackgroundAI" class="cutout-button" type="button">イラストを精密に切り抜く</button>
+              <button id="refineCutout" class="refine-cutout-button hidden" type="button">消えた部分を精密補正</button>
               <button id="restoreBackground" class="restore-cutout-button hidden" type="button">元画像に戻す</button>
             </div>
             <progress id="cutoutProgress" class="cutout-progress hidden" max="100" value="0"></progress>
-            <p id="cutoutStatus" class="cutout-status" role="status">人物・キャラクター画像におすすめです</p>
+            <p id="cutoutStatus" class="cutout-status" role="status">イラストやVTuberの立ち絵におすすめです</p>
             <p class="cutout-credit">
               画像は端末内で処理します。利用技術：
-              <a href="https://github.com/imgly/background-removal-js" target="_blank" rel="noopener noreferrer">IMG.LY Background Removal</a>
+              <a href="https://huggingface.co/BritishWerewolf/IS-Net-Anime" target="_blank" rel="noopener noreferrer">IS-Net-Anime</a>
+              ／
+              <a href="https://github.com/imgly/background-removal-js" target="_blank" rel="noopener noreferrer">IMG.LY</a>
             </p>
           </div>
           <button id="removeFg" class="text-button">選択画像を削除</button>
@@ -167,25 +187,33 @@
         </div>
         <button id="closeRefine" class="refine-close" type="button" aria-label="修正画面を閉じる">×</button>
       </div>
-      <p class="refine-guide">残った背景を指でなぞって消します。消しすぎた場所は「被写体を戻す」でなぞってください。</p>
+      <p class="refine-guide">最初は「被写体を戻す」になっています。薄く表示された元画像を見ながら、消えた髪や服をなぞって戻してください。</p>
       <div class="refine-toolbar">
         <div class="refine-mode" role="group" aria-label="修正方法">
           <button id="eraseMode" class="active" type="button" aria-pressed="true">背景を消す</button>
           <button id="restoreMode" type="button" aria-pressed="false">被写体を戻す</button>
         </div>
+        <button id="referenceToggle" class="refine-reference" type="button" aria-pressed="false">元画像を重ねて確認</button>
         <label class="refine-range">
-          <span>ブラシサイズ <output id="brushSizeOut">60</output></span>
-          <input id="brushSize" type="range" min="10" max="180" value="60">
+          <span>ブラシサイズ <output id="brushSizeOut">36</output></span>
+          <input id="brushSize" type="range" min="3" max="180" value="36">
+        </label>
+        <label class="refine-range">
+          <span>ブラシ境界 <output id="brushHardnessOut">85%</output></span>
+          <input id="brushHardness" type="range" min="20" max="100" value="85">
         </label>
         <label class="refine-range">
           <span>表示倍率 <output id="refineZoomOut">100%</output></span>
-          <input id="refineZoom" type="range" min="100" max="300" step="25" value="100">
+          <input id="refineZoom" type="range" min="100" max="600" step="25" value="100">
         </label>
       </div>
       <div id="refineStage" class="refine-stage">
-        <canvas id="refineCanvas" aria-label="切り抜きの修正画面"></canvas>
+        <div id="refineCanvasStack" class="refine-canvas-stack">
+          <canvas id="refineCanvas" aria-label="切り抜きの修正画面"></canvas>
+          <canvas id="refineReference" aria-hidden="true"></canvas>
+        </div>
       </div>
-      <p class="refine-help">画像を拡大すると、髪や服のまわりも細かくなぞれます。</p>
+      <p class="refine-help">最大600%まで拡大できます。細い髪は小さいブラシ、輪郭は「ブラシ境界」を高めにすると調整しやすくなります。</p>
       <div class="refine-dialog-actions">
         <button id="undoRefine" class="refine-secondary" type="button" disabled>1つ前へ</button>
         <button id="redoRefine" class="refine-secondary" type="button" disabled>1つ後へ</button>
