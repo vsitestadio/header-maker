@@ -116,7 +116,7 @@ function drawSafe() {
   ctx.setLineDash([canvas.width/120, canvas.width/180]);
   ctx.strokeRect(x, y, w, h);
   ctx.setLineDash([]);
-  ctx.fillStyle='rgba(15,35,29,.82)';
+  ctx.fillStyle='rgba(226, 226, 226, 0.82)';
   ctx.font=`800 ${Math.max(15,canvas.width/80)}px sans-serif`;
   ctx.textAlign='left';
   ctx.textBaseline='top';
@@ -599,6 +599,27 @@ canvas.addEventListener('pointermove', pointerMove, {
 canvas.addEventListener('pointerup', pointerEnd);
 canvas.addEventListener('pointercancel', pointerEnd);
 let resultUrl=null, resultFile=null;
+const xShareText='ヘッダーメーカーでオリジナルヘッダーを作りました！\n\n#ヘッダー作成 #Xヘッダー';
+function canShareResultFile() {
+  return Boolean(
+    resultFile&&
+    navigator.share&&
+    navigator.canShare&&
+    navigator.canShare({
+      files:[resultFile]
+    })
+  )
+}
+function xIntentUrl() {
+  const pageUrl=location.protocol==='file:'?'':location.href;
+  const text=[xShareText, pageUrl].filter(Boolean).join('\n\n');
+  return `https://x.com/intent/tweet?text=${encodeURIComponent(text)}`
+}
+function showXFallback() {
+  $('#shareFallbackNote').classList.remove('hidden');
+  $('#openXPost').href=xIntentUrl();
+  $('#openXPost').classList.remove('hidden')
+}
 function showSaveDialog(blob) {
   if(resultUrl)URL.revokeObjectURL(resultUrl);
   resultUrl=URL.createObjectURL(blob);
@@ -609,9 +630,12 @@ function showSaveDialog(blob) {
   $('#resultImage').src=resultUrl;
   $('#saveImage').href=resultUrl;
   $('#saveImage').download=filename;
-  $('#shareImage').hidden=!(navigator.share&&navigator.canShare&&navigator.canShare( {
-    files:[resultFile]
-  }));
+  const canShareFile=canShareResultFile();
+  $('#shareImage').hidden=!canShareFile;
+  $('#shareX').innerHTML=canShareFile?'<span aria-hidden="true">𝕏</span> 画像付きでXにシェア':'<span aria-hidden="true">𝕏</span> Xの投稿画面を開く';
+  $('#shareFallbackNote').classList.toggle('hidden', canShareFile);
+  $('#openXPost').classList.add('hidden');
+  $('#openXPost').href=xIntentUrl();
   $('#saveDialog').showModal()
 }
 $('#download').onclick=()=> {
@@ -620,17 +644,28 @@ $('#download').onclick=()=> {
     draw(true); if(blob)showSaveDialog(blob); else alert('画像を作成できませんでした。もう一度お試しください。')
   }, 'image/png')
 };
-$('#shareImage').onclick=async()=> {
+async function shareResultImage() {
   if(!resultFile)return;
   try {
     await navigator.share( {
-      files:[resultFile], title:'作成したヘッダー画像'
+      files:[resultFile],
+      title:'作成したヘッダー画像',
+      text:xShareText
     })
   }
   catch(e) {
-    if(e.name!=='AbortError')alert('共有できませんでした。画像を長押しして保存してください。')
+    if(e.name!=='AbortError')showXFallback()
   }
+}
+$('#shareX').onclick=()=> {
+  if(canShareResultFile()) {
+    shareResultImage();
+    return
+  }
+  showXFallback();
+  window.open(xIntentUrl(), '_blank', 'noopener,noreferrer')
 };
+$('#shareImage').onclick=shareResultImage;
 $('#closeDialog').onclick=()=>$('#saveDialog').close();
 $('#saveDialog').addEventListener('click', e=> {
   if(e.target===$('#saveDialog'))$('#saveDialog').close()
@@ -639,3 +674,4 @@ syncText();
 renderLayers();
 syncPreview();
 draw();
+
