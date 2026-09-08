@@ -25,6 +25,12 @@
   font-size:14px;
   line-height:1.7
 }
+.x-share-guide {
+  margin:14px 0 0;
+  color:var(--muted);
+  font-size:13px;
+  line-height:1.65
+}
 .dialog-content img {
   display:block;
   width:100%;
@@ -50,11 +56,11 @@
 }
 .dialog-actions {
   display:grid;
-  grid-template-columns:1fr 1fr;
+  grid-template-columns:repeat(2,minmax(0,1fr));
   gap:10px;
   margin-top:16px
 }
-.share-button,.download-link {
+.x-share-button,.share-button,.download-link,.open-x-post {
   display:flex;
   align-items:center;
   justify-content:center;
@@ -66,15 +72,45 @@
   text-decoration:none;
   cursor:pointer
 }
-.share-button {
+.x-share-button {
+  grid-column:1/-1;
+  gap:9px;
   border:0;
-  background:var(--ink);
+  background:#050505;
   color:#fff
+}
+.x-share-button span {
+  font-size:20px;
+  line-height:1
+}
+.share-button {
+  border:1px solid var(--line);
+  background:#fff;
+  color:var(--ink)
 }
 .download-link {
   border:1px solid #2bad84;
   background:var(--mint-soft);
   color:#16684f
+}
+.share-fallback-note {
+  margin:12px 0 0;
+  padding:11px 12px;
+  border-radius:10px;
+  background:#f3f6f8;
+  color:var(--muted);
+  font-size:12px;
+  line-height:1.65
+}
+.open-x-post {
+  min-height:44px;
+  margin-top:10px;
+  border:1px solid #050505;
+  color:#050505;
+  background:#fff
+}
+.share-fallback-note.hidden,.open-x-post.hidden {
+  display:none
 }
 @media(max-width:600px) {
   .dialog-content {
@@ -91,6 +127,9 @@
   }
   .ios-guide {
     font-size:13px
+  }
+  .x-share-guide {
+    font-size:12px
   }
 }
 .gesture-help {

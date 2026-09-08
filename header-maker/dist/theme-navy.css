@@ -176,8 +176,13 @@ body {
   border-color:#51cde6
 }
 .share-button {
+  color:#172331;
+  background:#f4f8fa;
+  border-color:#d8e4eb
+}
+.x-share-button {
   color:#fff;
-  background:#172331
+  background:#050505
 }
 @media(max-width:600px) {
   body {

@@ -16,6 +16,9 @@ const state= {
 };
 const clamp=(v, min, max)=>Math.max(min, Math.min(max, v));
 const selectedLayer=()=>state.layers.find(l=>l.id===state.selected)||null;
+const backgroundRemovalModule='https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm';
+let backgroundRemovalLoader=null;
+let cutoutBusy=false;
 function fontName() {
   return state.text.font==='serif'?'"Yu Mincho",serif':state.text.font==='round'?'"Hiragino Maru Gothic ProN","Yu Gothic",sans-serif':'"Noto Sans JP","Yu Gothic",sans-serif'
 }
@@ -213,7 +216,19 @@ function syncLayerTools() {
   $('#fgScale').value=Math.round(l.scale*100);
   $('#fgScaleOut').value=Math.round(l.scale*100)+'%';
   $('#rotation').value=Math.round(l.rotation);
-  $('#rotationOut').value=Math.round(l.rotation)+'°'
+  $('#rotationOut').value=Math.round(l.rotation)+'°';
+  $('#refineCutout').classList.toggle('hidden', !l.cutout);
+  $('#restoreBackground').classList.toggle('hidden', !l.cutout);
+  $('#removeBackgroundAI').textContent=l.cutout?'高精度でやり直す':'高精度AIで背景を削除';
+  $('#removeBackgroundAI').disabled=cutoutBusy;
+  $('#refineCutout').disabled=cutoutBusy;
+  $('#restoreBackground').disabled=cutoutBusy;
+  if(!cutoutBusy) {
+    setCutoutStatus(
+      l.cutout?'背景が残ったら「細かく修正」でなぞって消せます':'人物・キャラクター画像におすすめです',
+      l.cutout?'success':''
+    )
+  }
 }
 function renderLayers() {
   const list=$('#layerList');
@@ -232,6 +247,16 @@ function setUploadStatus(message, type='') {
   $('#uploadStatus').textContent=message;
   $('#uploadStatus').className='upload-status'+(type?' '+type:'')
 }
+function makeThumbnail(source) {
+  const width=source.naturalWidth||source.width;
+  const height=source.naturalHeight||source.height;
+  const rate=Math.min(1, 120/Math.max(width, height));
+  const thumb=document.createElement('canvas');
+  thumb.width=Math.max(1, Math.round(width*rate));
+  thumb.height=Math.max(1, Math.round(height*rate));
+  thumb.getContext('2d').drawImage(source, 0, 0, thumb.width, thumb.height);
+  return thumb.toDataURL('image/png')
+}
 function prepareImage(file, onReady) {
   if(!file)return;
   if(file.size>30*1024*1024) {
@@ -243,7 +268,14 @@ function prepareImage(file, onReady) {
   source.onload=()=> {
     setTimeout(()=> {
       try {
-        const max=2400, rate=Math.min(1, max/Math.max(source.naturalWidth, source.naturalHeight)), work=document.createElement('canvas'); work.width=Math.max(1, Math.round(source.naturalWidth*rate)); work.height=Math.max(1, Math.round(source.naturalHeight*rate)); work.getContext('2d').drawImage(source, 0, 0, work.width, work.height); const thumbCanvas=document.createElement('canvas'), thumbRate=Math.min(1, 120/Math.max(work.width, work.height)); thumbCanvas.width=Math.max(1, Math.round(work.width*thumbRate)); thumbCanvas.height=Math.max(1, Math.round(work.height*thumbRate)); thumbCanvas.getContext('2d').drawImage(work, 0, 0, thumbCanvas.width, thumbCanvas.height); const thumb=thumbCanvas.toDataURL('image/png'); URL.revokeObjectURL(sourceUrl); onReady(work, thumb); setUploadStatus('画像を追加しました。続けて別の画像も追加できます')
+        const max=2400, rate=Math.min(1, max/Math.max(source.naturalWidth, source.naturalHeight)), work=document.createElement('canvas');
+        work.width=Math.max(1, Math.round(source.naturalWidth*rate));
+        work.height=Math.max(1, Math.round(source.naturalHeight*rate));
+        work.getContext('2d').drawImage(source, 0, 0, work.width, work.height);
+        const thumb=makeThumbnail(work);
+        URL.revokeObjectURL(sourceUrl);
+        onReady(work, thumb);
+        setUploadStatus('画像を追加しました。続けて別の画像も追加できます')
       }
       catch(error) {
         URL.revokeObjectURL(sourceUrl); setUploadStatus('画像を読み込めませんでした。PNGまたはJPEGをお試しください', 'error')
@@ -263,7 +295,7 @@ function addFiles(files) {
     const l= {
       id:`layer-${Date.now()}-${Math.random()}`, name:file.name||`画像 ${state.layers.length+1}`, img, url, pos: {
         x:.78-state.layers.length*.05, y:.55
-      }, scale:.55, rotation:0, flipX:false
+      }, scale:.55, rotation:0, flipX:false, originalImg:img, originalUrl:url, cutout:false
     }; state.layers.push(l); if(state.layers.length===1)repositionTemplateLayer(); state.selected=l.id; renderLayers(); draw()
   })
 }
@@ -404,6 +436,338 @@ $('#flipX').onclick=()=> {
     draw()
   }
 };
+function setCutoutStatus(message, type='') {
+  $('#cutoutStatus').textContent=message;
+  $('#cutoutStatus').className='cutout-status'+(type?' '+type:'')
+}
+function setCutoutBusy(busy) {
+  cutoutBusy=busy;
+  $('#layerTools').setAttribute('aria-busy', String(busy));
+  $('#removeBackgroundAI').disabled=busy;
+  $('#refineCutout').disabled=busy;
+  $('#restoreBackground').disabled=busy
+}
+function makeProcessingCanvas(source) {
+  const sourceWidth=source.naturalWidth||source.width;
+  const sourceHeight=source.naturalHeight||source.height;
+  const mobile=window.matchMedia('(max-width: 700px)').matches;
+  const maxSide=mobile?1600:2200;
+  const rate=Math.min(1, maxSide/Math.max(sourceWidth, sourceHeight));
+  const work=document.createElement('canvas');
+  work.width=Math.max(1, Math.round(sourceWidth*rate));
+  work.height=Math.max(1, Math.round(sourceHeight*rate));
+  work.getContext('2d').drawImage(source, 0, 0, work.width, work.height);
+  return work
+}
+function canvasToBlob(source) {
+  return new Promise((resolve, reject)=> {
+    source.toBlob(blob=> {
+      if(blob)resolve(blob);
+      else reject(new Error('画像を変換できませんでした'))
+    }, 'image/png')
+  })
+}
+function blobToCanvas(blob) {
+  return new Promise((resolve, reject)=> {
+    const image=new Image();
+    const objectUrl=URL.createObjectURL(blob);
+    image.onload=()=> {
+      try {
+        const result=document.createElement('canvas');
+        result.width=image.naturalWidth;
+        result.height=image.naturalHeight;
+        result.getContext('2d').drawImage(image, 0, 0);
+        URL.revokeObjectURL(objectUrl);
+        resolve(result)
+      }
+      catch(error) {
+        URL.revokeObjectURL(objectUrl);
+        reject(error)
+      }
+    };
+    image.onerror=()=> {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('切り抜き画像を読み込めませんでした'))
+    };
+    image.src=objectUrl
+  })
+}
+async function getBackgroundRemoval() {
+  if(!backgroundRemovalLoader) {
+    backgroundRemovalLoader=import(backgroundRemovalModule)
+      .then(module=> {
+        const removeBackground=module.removeBackground||module.default;
+        if(typeof removeBackground!=='function')throw new Error('AI切り抜きを読み込めませんでした');
+        return removeBackground
+      })
+      .catch(error=> {
+        backgroundRemovalLoader=null;
+        throw error
+      })
+  }
+  return backgroundRemovalLoader
+}
+function updateCutoutProgress(key, current, total) {
+  const progress=$('#cutoutProgress');
+  const value=total>0?clamp(Math.round(current/total*100), 0, 100):null;
+  const preparing=String(key).toLowerCase().includes('fetch');
+  progress.classList.remove('hidden');
+  if(value===null)progress.removeAttribute('value');
+  else progress.value=value;
+  setCutoutStatus(
+    `${preparing?'AIを準備中':'被写体を切り抜き中'}${value===null?'…':`… ${value}%`}`,
+    'loading'
+  )
+}
+async function removeSelectedLayerBackground() {
+  const layer=selectedLayer();
+  if(!layer||cutoutBusy)return;
+  const layerId=layer.id;
+  const progress=$('#cutoutProgress');
+  let completion=null;
+  setCutoutBusy(true);
+  progress.classList.remove('hidden');
+  progress.removeAttribute('value');
+  setCutoutStatus('高精度AIを準備しています。初回のみ少し時間がかかります…', 'loading');
+  try {
+    const processingCanvas=makeProcessingCanvas(layer.originalImg||layer.img);
+    const [removeBackground, inputBlob]=await Promise.all([
+      getBackgroundRemoval(),
+      canvasToBlob(processingCanvas)
+    ]);
+    const resultBlob=await removeBackground(inputBlob, {
+      model:'isnet_fp16',
+      progress:updateCutoutProgress
+    });
+    progress.value=100;
+    setCutoutStatus('透明な画像に仕上げています…', 'loading');
+    const resultCanvas=await blobToCanvas(resultBlob);
+    const target=state.layers.find(item=>item.id===layerId);
+    if(!target)return;
+    target.img=resultCanvas;
+    target.url=makeThumbnail(resultCanvas);
+    target.cutout=true;
+    target.cutoutSource=processingCanvas;
+    renderLayers();
+    draw();
+    completion={message:'背景を削除しました', type:'success'}
+  }
+  catch(error) {
+    console.error('Background removal failed:', error);
+    completion={message:'切り抜きに失敗しました。通信環境を確認して、もう一度お試しください', type:'error'}
+  }
+  finally {
+    setCutoutBusy(false);
+    progress.classList.add('hidden');
+    progress.value=0;
+    syncLayerTools();
+    if(completion)setCutoutStatus(completion.message, completion.type)
+  }
+}
+$('#removeBackgroundAI').onclick=removeSelectedLayerBackground;
+$('#restoreBackground').onclick=()=> {
+  const layer=selectedLayer();
+  if(!layer||!layer.cutout||cutoutBusy)return;
+  layer.img=layer.originalImg;
+  layer.url=layer.originalUrl;
+  layer.cutout=false;
+  layer.cutoutSource=null;
+  renderLayers();
+  draw();
+  setCutoutStatus('元画像に戻しました', 'success')
+};
+const refineCanvas=$('#refineCanvas');
+const refineContext=refineCanvas.getContext('2d');
+const restoreBrushCanvas=document.createElement('canvas');
+const refineState= {
+  layerId:null,
+  source:null,
+  previous:null,
+  drawing:false,
+  mode:'erase',
+  lastPoint:null,
+  fitScale:1
+};
+function cloneCanvas(source) {
+  const copy=document.createElement('canvas');
+  copy.width=source.width;
+  copy.height=source.height;
+  copy.getContext('2d').drawImage(source, 0, 0);
+  return copy
+}
+function setRefineMode(mode) {
+  refineState.mode=mode;
+  const erase=mode==='erase';
+  $('#eraseMode').classList.toggle('active', erase);
+  $('#restoreMode').classList.toggle('active', !erase);
+  $('#eraseMode').setAttribute('aria-pressed', String(erase));
+  $('#restoreMode').setAttribute('aria-pressed', String(!erase))
+}
+function sizeRefineCanvas() {
+  if(!refineCanvas.width)return;
+  const stage=$('#refineStage');
+  const availableWidth=Math.max(120, stage.clientWidth-32);
+  const zoom=Number($('#refineZoom').value)/100;
+  refineState.fitScale=Math.min(1, availableWidth/refineCanvas.width);
+  refineCanvas.style.width=Math.round(refineCanvas.width*refineState.fitScale*zoom)+'px';
+  refineCanvas.style.height='auto'
+}
+function sourceForRefine(layer) {
+  if(
+    layer.cutoutSource&&
+    layer.cutoutSource.width===layer.img.width&&
+    layer.cutoutSource.height===layer.img.height
+  )return layer.cutoutSource;
+  const source=document.createElement('canvas');
+  source.width=layer.img.width;
+  source.height=layer.img.height;
+  source.getContext('2d').drawImage(layer.originalImg, 0, 0, source.width, source.height);
+  return source
+}
+function openRefineEditor() {
+  const layer=selectedLayer();
+  if(!layer||!layer.cutout)return;
+  refineState.layerId=layer.id;
+  refineState.source=sourceForRefine(layer);
+  refineState.previous=null;
+  refineState.drawing=false;
+  refineState.lastPoint=null;
+  refineCanvas.width=layer.img.width;
+  refineCanvas.height=layer.img.height;
+  refineContext.clearRect(0, 0, refineCanvas.width, refineCanvas.height);
+  refineContext.drawImage(layer.img, 0, 0);
+  $('#undoRefine').disabled=true;
+  $('#refineZoom').value=100;
+  $('#refineZoomOut').value='100%';
+  setRefineMode('erase');
+  $('#refineDialog').showModal();
+  requestAnimationFrame(()=> {
+    sizeRefineCanvas();
+    $('#refineStage').scrollTo(0, 0)
+  })
+}
+function refinePoint(event) {
+  const rect=refineCanvas.getBoundingClientRect();
+  return {
+    x:(event.clientX-rect.left)/rect.width*refineCanvas.width,
+    y:(event.clientY-rect.top)/rect.height*refineCanvas.height
+  }
+}
+function paintEraseStamp(x, y, radius) {
+  refineContext.save();
+  refineContext.globalCompositeOperation='destination-out';
+  const gradient=refineContext.createRadialGradient(x, y, radius*.72, x, y, radius);
+  gradient.addColorStop(0, 'rgba(0,0,0,1)');
+  gradient.addColorStop(1, 'rgba(0,0,0,0)');
+  refineContext.fillStyle=gradient;
+  refineContext.beginPath();
+  refineContext.arc(x, y, radius, 0, Math.PI*2);
+  refineContext.fill();
+  refineContext.restore()
+}
+function paintRestoreStamp(x, y, radius) {
+  const size=Math.max(2, Math.ceil(radius*2));
+  const center=size/2;
+  restoreBrushCanvas.width=size;
+  restoreBrushCanvas.height=size;
+  const brushContext=restoreBrushCanvas.getContext('2d');
+  brushContext.drawImage(refineState.source, center-x, center-y);
+  brushContext.globalCompositeOperation='destination-in';
+  const gradient=brushContext.createRadialGradient(center, center, radius*.72, center, center, radius);
+  gradient.addColorStop(0, 'rgba(0,0,0,1)');
+  gradient.addColorStop(1, 'rgba(0,0,0,0)');
+  brushContext.fillStyle=gradient;
+  brushContext.fillRect(0, 0, size, size);
+  refineContext.save();
+  refineContext.globalCompositeOperation='source-over';
+  refineContext.drawImage(restoreBrushCanvas, x-center, y-center);
+  refineContext.restore()
+}
+function paintRefineSegment(from, to) {
+  const radius=Number($('#brushSize').value)/2;
+  const distance=Math.hypot(to.x-from.x, to.y-from.y);
+  const steps=Math.max(1, Math.ceil(distance/Math.max(2, radius*.28)));
+  for(let index=1; index<=steps; index++) {
+    const progress=index/steps;
+    const x=from.x+(to.x-from.x)*progress;
+    const y=from.y+(to.y-from.y)*progress;
+    if(refineState.mode==='restore')paintRestoreStamp(x, y, radius);
+    else paintEraseStamp(x, y, radius)
+  }
+}
+function startRefineStroke(event) {
+  if(refineState.drawing)return;
+  event.preventDefault();
+  refineState.previous=cloneCanvas(refineCanvas);
+  $('#undoRefine').disabled=false;
+  refineState.drawing=true;
+  refineCanvas.setPointerCapture?.(event.pointerId);
+  refineState.lastPoint=refinePoint(event);
+  paintRefineSegment(refineState.lastPoint, refineState.lastPoint)
+}
+function moveRefineStroke(event) {
+  if(!refineState.drawing)return;
+  event.preventDefault();
+  const point=refinePoint(event);
+  paintRefineSegment(refineState.lastPoint, point);
+  refineState.lastPoint=point
+}
+function endRefineStroke(event) {
+  if(!refineState.drawing)return;
+  event.preventDefault();
+  refineState.drawing=false;
+  refineState.lastPoint=null
+}
+function closeRefineEditor() {
+  $('#refineDialog').close()
+}
+$('#refineCutout').onclick=openRefineEditor;
+$('#eraseMode').onclick=()=>setRefineMode('erase');
+$('#restoreMode').onclick=()=>setRefineMode('restore');
+$('#brushSize').oninput=event=> {
+  $('#brushSizeOut').value=event.target.value
+};
+$('#refineZoom').oninput=event=> {
+  $('#refineZoomOut').value=event.target.value+'%';
+  sizeRefineCanvas()
+};
+$('#undoRefine').onclick=()=> {
+  if(!refineState.previous)return;
+  refineContext.clearRect(0, 0, refineCanvas.width, refineCanvas.height);
+  refineContext.drawImage(refineState.previous, 0, 0);
+  refineState.previous=null;
+  $('#undoRefine').disabled=true
+};
+$('#applyRefine').onclick=()=> {
+  const layer=state.layers.find(item=>item.id===refineState.layerId);
+  if(!layer)return closeRefineEditor();
+  layer.img=cloneCanvas(refineCanvas);
+  layer.url=makeThumbnail(layer.img);
+  layer.cutout=true;
+  closeRefineEditor();
+  renderLayers();
+  draw();
+  setCutoutStatus('細かい修正を反映しました', 'success')
+};
+$('#closeRefine').onclick=closeRefineEditor;
+$('#cancelRefine').onclick=closeRefineEditor;
+$('#refineDialog').addEventListener('close', ()=> {
+  refineState.layerId=null;
+  refineState.source=null;
+  refineState.previous=null;
+  refineState.drawing=false;
+  refineState.lastPoint=null
+});
+$('#refineDialog').addEventListener('click', event=> {
+  if(event.target===$('#refineDialog'))closeRefineEditor()
+});
+refineCanvas.addEventListener('pointerdown', startRefineStroke, {passive:false});
+refineCanvas.addEventListener('pointermove', moveRefineStroke, {passive:false});
+refineCanvas.addEventListener('pointerup', endRefineStroke, {passive:false});
+refineCanvas.addEventListener('pointercancel', endRefineStroke, {passive:false});
+window.addEventListener('resize', ()=> {
+  if($('#refineDialog').open)sizeRefineCanvas()
+});
 function moveLayer(step) {
   const l=selectedLayer();
   if(!l)return;
@@ -599,6 +963,27 @@ canvas.addEventListener('pointermove', pointerMove, {
 canvas.addEventListener('pointerup', pointerEnd);
 canvas.addEventListener('pointercancel', pointerEnd);
 let resultUrl=null, resultFile=null;
+const xShareText='ヘッダーメーカーでオリジナルヘッダーを作りました！\n\n@VsiteStadio #ヘッダー作成 #Xヘッダー';
+function canShareResultFile() {
+  return Boolean(
+    resultFile&&
+    navigator.share&&
+    navigator.canShare&&
+    navigator.canShare({
+      files:[resultFile]
+    })
+  )
+}
+function xIntentUrl() {
+  const pageUrl=location.protocol==='file:'?'':location.href;
+  const text=[xShareText, pageUrl].filter(Boolean).join('\n\n');
+  return `https://x.com/intent/tweet?text=${encodeURIComponent(text)}`
+}
+function showXFallback() {
+  $('#shareFallbackNote').classList.remove('hidden');
+  $('#openXPost').href=xIntentUrl();
+  $('#openXPost').classList.remove('hidden')
+}
 function showSaveDialog(blob) {
   if(resultUrl)URL.revokeObjectURL(resultUrl);
   resultUrl=URL.createObjectURL(blob);
@@ -609,9 +994,12 @@ function showSaveDialog(blob) {
   $('#resultImage').src=resultUrl;
   $('#saveImage').href=resultUrl;
   $('#saveImage').download=filename;
-  $('#shareImage').hidden=!(navigator.share&&navigator.canShare&&navigator.canShare( {
-    files:[resultFile]
-  }));
+  const canShareFile=canShareResultFile();
+  $('#shareImage').hidden=!canShareFile;
+  $('#shareX').innerHTML=canShareFile?'<span aria-hidden="true">𝕏</span> 画像付きでXにシェア':'<span aria-hidden="true">𝕏</span> Xの投稿画面を開く';
+  $('#shareFallbackNote').classList.toggle('hidden', canShareFile);
+  $('#openXPost').classList.add('hidden');
+  $('#openXPost').href=xIntentUrl();
   $('#saveDialog').showModal()
 }
 $('#download').onclick=()=> {
@@ -620,17 +1008,28 @@ $('#download').onclick=()=> {
     draw(true); if(blob)showSaveDialog(blob); else alert('画像を作成できませんでした。もう一度お試しください。')
   }, 'image/png')
 };
-$('#shareImage').onclick=async()=> {
+async function shareResultImage() {
   if(!resultFile)return;
   try {
     await navigator.share( {
-      files:[resultFile], title:'作成したヘッダー画像'
+      files:[resultFile],
+      title:'作成したヘッダー画像',
+      text:xShareText
     })
   }
   catch(e) {
-    if(e.name!=='AbortError')alert('共有できませんでした。画像を長押しして保存してください。')
+    if(e.name!=='AbortError')showXFallback()
   }
+}
+$('#shareX').onclick=()=> {
+  if(canShareResultFile()) {
+    shareResultImage();
+    return
+  }
+  showXFallback();
+  window.open(xIntentUrl(), '_blank', 'noopener,noreferrer')
 };
+$('#shareImage').onclick=shareResultImage;
 $('#closeDialog').onclick=()=>$('#saveDialog').close();
 $('#saveDialog').addEventListener('click', e=> {
   if(e.target===$('#saveDialog'))$('#saveDialog').close()

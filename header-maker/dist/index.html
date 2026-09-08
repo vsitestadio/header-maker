@@ -65,6 +65,26 @@
             <button id="layerBack" type="button">背面へ</button>
             <button id="layerFront" type="button">前面へ</button>
           </div>
+          <div class="cutout-panel">
+            <div class="cutout-heading">
+              <span aria-hidden="true">✦</span>
+              <div>
+                <b>高精度AI切り抜き</b>
+                <small>自動で切り抜いた後、指で細かく修正できます</small>
+              </div>
+            </div>
+            <div class="cutout-actions">
+              <button id="removeBackgroundAI" class="cutout-button" type="button">高精度AIで背景を削除</button>
+              <button id="refineCutout" class="refine-cutout-button hidden" type="button">細かく修正</button>
+              <button id="restoreBackground" class="restore-cutout-button hidden" type="button">元画像に戻す</button>
+            </div>
+            <progress id="cutoutProgress" class="cutout-progress hidden" max="100" value="0"></progress>
+            <p id="cutoutStatus" class="cutout-status" role="status">人物・キャラクター画像におすすめです</p>
+            <p class="cutout-credit">
+              画像は端末内で処理します。利用技術：
+              <a href="https://github.com/imgly/background-removal-js" target="_blank" rel="noopener noreferrer">IMG.LY Background Removal</a>
+            </p>
+          </div>
           <button id="removeFg" class="text-button">選択画像を削除</button>
         </div>
 
@@ -125,13 +145,54 @@
       <h2>画像が完成しました</h2>
       <p class="ios-guide">iPhoneでは、下の画像を長押しして「写真に保存」を選べます。</p>
       <img id="resultImage" alt="完成したヘッダー画像">
+      <p class="x-share-guide">完成した画像をそのまま投稿する場合は、共有先からXを選んでください。</p>
       <div class="dialog-actions">
-        <button id="shareImage" class="share-button">共有・写真に保存</button>
+        <button id="shareX" class="x-share-button" type="button"><span aria-hidden="true">𝕏</span> 画像付きでXにシェア</button>
+        <button id="shareImage" class="share-button" type="button">その他の方法で共有</button>
         <a id="saveImage" class="download-link" download="header.png">画像をダウンロード</a>
+      </div>
+      <p id="shareFallbackNote" class="share-fallback-note hidden" role="status">
+        この端末では画像をXへ直接渡せません。先に画像を保存し、開いた投稿画面で添付してください。
+      </p>
+      <a id="openXPost" class="open-x-post hidden" href="#" target="_blank" rel="noopener noreferrer">Xの投稿画面を開く</a>
+    </div>
+  </dialog>
+
+  <dialog id="refineDialog" class="refine-dialog">
+    <div class="refine-dialog-content">
+      <div class="refine-dialog-head">
+        <div>
+          <p class="refine-eyebrow">CUTOUT RETOUCH</p>
+          <h2>切り抜きを細かく修正</h2>
+        </div>
+        <button id="closeRefine" class="refine-close" type="button" aria-label="修正画面を閉じる">×</button>
+      </div>
+      <p class="refine-guide">残った背景を指でなぞって消します。消しすぎた場所は「被写体を戻す」でなぞってください。</p>
+      <div class="refine-toolbar">
+        <div class="refine-mode" role="group" aria-label="修正方法">
+          <button id="eraseMode" class="active" type="button" aria-pressed="true">背景を消す</button>
+          <button id="restoreMode" type="button" aria-pressed="false">被写体を戻す</button>
+        </div>
+        <label class="refine-range">
+          <span>ブラシサイズ <output id="brushSizeOut">60</output></span>
+          <input id="brushSize" type="range" min="10" max="180" value="60">
+        </label>
+        <label class="refine-range">
+          <span>表示倍率 <output id="refineZoomOut">100%</output></span>
+          <input id="refineZoom" type="range" min="100" max="300" step="25" value="100">
+        </label>
+      </div>
+      <div id="refineStage" class="refine-stage">
+        <canvas id="refineCanvas" aria-label="切り抜きの修正画面"></canvas>
+      </div>
+      <p class="refine-help">画像を拡大すると、髪や服のまわりも細かくなぞれます。</p>
+      <div class="refine-dialog-actions">
+        <button id="undoRefine" class="refine-secondary" type="button" disabled>ひとつ戻す</button>
+        <button id="cancelRefine" class="refine-secondary" type="button">キャンセル</button>
+        <button id="applyRefine" class="refine-apply" type="button">修正を反映</button>
       </div>
     </div>
   </dialog>
   <script src="app.js"></script>
 </body>
 </html>
-
