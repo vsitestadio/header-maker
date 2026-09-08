@@ -119,6 +119,121 @@
   font-weight:800;
   cursor:pointer
 }
+.cutout-panel {
+  margin-top:12px;
+  padding:12px;
+  border:1px solid #c9eaf3;
+  border-radius:12px;
+  background:linear-gradient(145deg,#f8fdff,#edfaff)
+}
+.cutout-heading {
+  display:flex;
+  align-items:flex-start;
+  gap:8px
+}
+.cutout-heading>span {
+  display:grid;
+  flex:0 0 auto;
+  width:25px;
+  height:25px;
+  place-items:center;
+  border-radius:8px;
+  color:#fff;
+  background:linear-gradient(135deg,#13b8dc,#44d5eb);
+  box-shadow:0 6px 14px rgba(20,184,220,.2)
+}
+.cutout-heading div {
+  display:flex;
+  flex-direction:column;
+  gap:2px
+}
+.cutout-heading b {
+  color:#173342;
+  font-size:12px
+}
+.cutout-heading small {
+  color:#6a7f8c;
+  font-size:10px;
+  line-height:1.45
+}
+.cutout-actions {
+  display:grid;
+  grid-template-columns:1fr auto;
+  gap:7px;
+  margin-top:10px
+}
+.cutout-actions button {
+  min-height:38px;
+  padding:7px 10px;
+  border-radius:9px;
+  font:inherit;
+  font-size:10px;
+  font-weight:900;
+  cursor:pointer
+}
+.cutout-button {
+  border:0;
+  color:#fff;
+  background:linear-gradient(135deg,#0eafd2,#22c9e5);
+  box-shadow:0 8px 18px rgba(16,177,211,.2)
+}
+.restore-cutout-button {
+  border:1px solid #c9dce5;
+  color:#35515f;
+  background:#fff
+}
+.cutout-actions button:disabled {
+  cursor:wait;
+  opacity:.58;
+  box-shadow:none
+}
+.cutout-progress {
+  display:block;
+  width:100%;
+  height:7px;
+  margin-top:10px;
+  overflow:hidden;
+  border:0;
+  border-radius:999px;
+  accent-color:#18bddf
+}
+.cutout-progress::-webkit-progress-bar {
+  border-radius:999px;
+  background:#dceef3
+}
+.cutout-progress::-webkit-progress-value {
+  border-radius:999px;
+  background:linear-gradient(90deg,#10add0,#32d0e8)
+}
+.cutout-status {
+  min-height:15px;
+  margin:8px 0 0;
+  color:#65808e;
+  font-size:10px;
+  line-height:1.5
+}
+.cutout-status.loading {
+  color:#087f9e;
+  font-weight:800
+}
+.cutout-status.success {
+  color:#14805f;
+  font-weight:800
+}
+.cutout-status.error {
+  color:#a04c4c;
+  font-weight:800
+}
+.cutout-credit {
+  margin:5px 0 0;
+  color:#83939d;
+  font-size:8px;
+  line-height:1.5
+}
+.cutout-credit a {
+  color:inherit;
+  text-underline-offset:2px
+}
 .text-tools {
   margin-top:12px;
   padding:12px;
@@ -151,6 +266,9 @@
 }
 @media(max-width:600px) {
   .transform-buttons {
+    grid-template-columns:1fr
+  }
+  .cutout-actions {
     grid-template-columns:1fr
   }
   .preview-head span {
