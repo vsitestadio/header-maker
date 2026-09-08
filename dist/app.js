@@ -217,13 +217,15 @@ function syncLayerTools() {
   $('#fgScaleOut').value=Math.round(l.scale*100)+'%';
   $('#rotation').value=Math.round(l.rotation);
   $('#rotationOut').value=Math.round(l.rotation)+'°';
+  $('#refineCutout').classList.toggle('hidden', !l.cutout);
   $('#restoreBackground').classList.toggle('hidden', !l.cutout);
-  $('#removeBackgroundAI').textContent=l.cutout?'切り抜きをやり直す':'AIで背景を削除';
+  $('#removeBackgroundAI').textContent=l.cutout?'高精度でやり直す':'高精度AIで背景を削除';
   $('#removeBackgroundAI').disabled=cutoutBusy;
+  $('#refineCutout').disabled=cutoutBusy;
   $('#restoreBackground').disabled=cutoutBusy;
   if(!cutoutBusy) {
     setCutoutStatus(
-      l.cutout?'背景を削除済みです。必要なら元画像へ戻せます':'人物・キャラクター画像におすすめです',
+      l.cutout?'背景が残ったら「細かく修正」でなぞって消せます':'人物・キャラクター画像におすすめです',
       l.cutout?'success':''
     )
   }
@@ -442,13 +444,14 @@ function setCutoutBusy(busy) {
   cutoutBusy=busy;
   $('#layerTools').setAttribute('aria-busy', String(busy));
   $('#removeBackgroundAI').disabled=busy;
+  $('#refineCutout').disabled=busy;
   $('#restoreBackground').disabled=busy
 }
 function makeProcessingCanvas(source) {
   const sourceWidth=source.naturalWidth||source.width;
   const sourceHeight=source.naturalHeight||source.height;
   const mobile=window.matchMedia('(max-width: 700px)').matches;
-  const maxSide=mobile?1400:1800;
+  const maxSide=mobile?1600:2200;
   const rate=Math.min(1, maxSide/Math.max(sourceWidth, sourceHeight));
   const work=document.createElement('canvas');
   work.width=Math.max(1, Math.round(sourceWidth*rate));
@@ -525,7 +528,7 @@ async function removeSelectedLayerBackground() {
   setCutoutBusy(true);
   progress.classList.remove('hidden');
   progress.removeAttribute('value');
-  setCutoutStatus('AIを準備しています。初回のみ少し時間がかかります…', 'loading');
+  setCutoutStatus('高精度AIを準備しています。初回のみ少し時間がかかります…', 'loading');
   try {
     const processingCanvas=makeProcessingCanvas(layer.originalImg||layer.img);
     const [removeBackground, inputBlob]=await Promise.all([
@@ -533,7 +536,7 @@ async function removeSelectedLayerBackground() {
       canvasToBlob(processingCanvas)
     ]);
     const resultBlob=await removeBackground(inputBlob, {
-      model:'isnet_quint8',
+      model:'isnet_fp16',
       progress:updateCutoutProgress
     });
     progress.value=100;
@@ -544,6 +547,7 @@ async function removeSelectedLayerBackground() {
     target.img=resultCanvas;
     target.url=makeThumbnail(resultCanvas);
     target.cutout=true;
+    target.cutoutSource=processingCanvas;
     renderLayers();
     draw();
     completion={message:'背景を削除しました', type:'success'}
@@ -567,10 +571,203 @@ $('#restoreBackground').onclick=()=> {
   layer.img=layer.originalImg;
   layer.url=layer.originalUrl;
   layer.cutout=false;
+  layer.cutoutSource=null;
   renderLayers();
   draw();
   setCutoutStatus('元画像に戻しました', 'success')
 };
+const refineCanvas=$('#refineCanvas');
+const refineContext=refineCanvas.getContext('2d');
+const restoreBrushCanvas=document.createElement('canvas');
+const refineState= {
+  layerId:null,
+  source:null,
+  previous:null,
+  drawing:false,
+  mode:'erase',
+  lastPoint:null,
+  fitScale:1
+};
+function cloneCanvas(source) {
+  const copy=document.createElement('canvas');
+  copy.width=source.width;
+  copy.height=source.height;
+  copy.getContext('2d').drawImage(source, 0, 0);
+  return copy
+}
+function setRefineMode(mode) {
+  refineState.mode=mode;
+  const erase=mode==='erase';
+  $('#eraseMode').classList.toggle('active', erase);
+  $('#restoreMode').classList.toggle('active', !erase);
+  $('#eraseMode').setAttribute('aria-pressed', String(erase));
+  $('#restoreMode').setAttribute('aria-pressed', String(!erase))
+}
+function sizeRefineCanvas() {
+  if(!refineCanvas.width)return;
+  const stage=$('#refineStage');
+  const availableWidth=Math.max(120, stage.clientWidth-32);
+  const zoom=Number($('#refineZoom').value)/100;
+  refineState.fitScale=Math.min(1, availableWidth/refineCanvas.width);
+  refineCanvas.style.width=Math.round(refineCanvas.width*refineState.fitScale*zoom)+'px';
+  refineCanvas.style.height='auto'
+}
+function sourceForRefine(layer) {
+  if(
+    layer.cutoutSource&&
+    layer.cutoutSource.width===layer.img.width&&
+    layer.cutoutSource.height===layer.img.height
+  )return layer.cutoutSource;
+  const source=document.createElement('canvas');
+  source.width=layer.img.width;
+  source.height=layer.img.height;
+  source.getContext('2d').drawImage(layer.originalImg, 0, 0, source.width, source.height);
+  return source
+}
+function openRefineEditor() {
+  const layer=selectedLayer();
+  if(!layer||!layer.cutout)return;
+  refineState.layerId=layer.id;
+  refineState.source=sourceForRefine(layer);
+  refineState.previous=null;
+  refineState.drawing=false;
+  refineState.lastPoint=null;
+  refineCanvas.width=layer.img.width;
+  refineCanvas.height=layer.img.height;
+  refineContext.clearRect(0, 0, refineCanvas.width, refineCanvas.height);
+  refineContext.drawImage(layer.img, 0, 0);
+  $('#undoRefine').disabled=true;
+  $('#refineZoom').value=100;
+  $('#refineZoomOut').value='100%';
+  setRefineMode('erase');
+  $('#refineDialog').showModal();
+  requestAnimationFrame(()=> {
+    sizeRefineCanvas();
+    $('#refineStage').scrollTo(0, 0)
+  })
+}
+function refinePoint(event) {
+  const rect=refineCanvas.getBoundingClientRect();
+  return {
+    x:(event.clientX-rect.left)/rect.width*refineCanvas.width,
+    y:(event.clientY-rect.top)/rect.height*refineCanvas.height
+  }
+}
+function paintEraseStamp(x, y, radius) {
+  refineContext.save();
+  refineContext.globalCompositeOperation='destination-out';
+  const gradient=refineContext.createRadialGradient(x, y, radius*.72, x, y, radius);
+  gradient.addColorStop(0, 'rgba(0,0,0,1)');
+  gradient.addColorStop(1, 'rgba(0,0,0,0)');
+  refineContext.fillStyle=gradient;
+  refineContext.beginPath();
+  refineContext.arc(x, y, radius, 0, Math.PI*2);
+  refineContext.fill();
+  refineContext.restore()
+}
+function paintRestoreStamp(x, y, radius) {
+  const size=Math.max(2, Math.ceil(radius*2));
+  const center=size/2;
+  restoreBrushCanvas.width=size;
+  restoreBrushCanvas.height=size;
+  const brushContext=restoreBrushCanvas.getContext('2d');
+  brushContext.drawImage(refineState.source, center-x, center-y);
+  brushContext.globalCompositeOperation='destination-in';
+  const gradient=brushContext.createRadialGradient(center, center, radius*.72, center, center, radius);
+  gradient.addColorStop(0, 'rgba(0,0,0,1)');
+  gradient.addColorStop(1, 'rgba(0,0,0,0)');
+  brushContext.fillStyle=gradient;
+  brushContext.fillRect(0, 0, size, size);
+  refineContext.save();
+  refineContext.globalCompositeOperation='source-over';
+  refineContext.drawImage(restoreBrushCanvas, x-center, y-center);
+  refineContext.restore()
+}
+function paintRefineSegment(from, to) {
+  const radius=Number($('#brushSize').value)/2;
+  const distance=Math.hypot(to.x-from.x, to.y-from.y);
+  const steps=Math.max(1, Math.ceil(distance/Math.max(2, radius*.28)));
+  for(let index=1; index<=steps; index++) {
+    const progress=index/steps;
+    const x=from.x+(to.x-from.x)*progress;
+    const y=from.y+(to.y-from.y)*progress;
+    if(refineState.mode==='restore')paintRestoreStamp(x, y, radius);
+    else paintEraseStamp(x, y, radius)
+  }
+}
+function startRefineStroke(event) {
+  if(refineState.drawing)return;
+  event.preventDefault();
+  refineState.previous=cloneCanvas(refineCanvas);
+  $('#undoRefine').disabled=false;
+  refineState.drawing=true;
+  refineCanvas.setPointerCapture?.(event.pointerId);
+  refineState.lastPoint=refinePoint(event);
+  paintRefineSegment(refineState.lastPoint, refineState.lastPoint)
+}
+function moveRefineStroke(event) {
+  if(!refineState.drawing)return;
+  event.preventDefault();
+  const point=refinePoint(event);
+  paintRefineSegment(refineState.lastPoint, point);
+  refineState.lastPoint=point
+}
+function endRefineStroke(event) {
+  if(!refineState.drawing)return;
+  event.preventDefault();
+  refineState.drawing=false;
+  refineState.lastPoint=null
+}
+function closeRefineEditor() {
+  $('#refineDialog').close()
+}
+$('#refineCutout').onclick=openRefineEditor;
+$('#eraseMode').onclick=()=>setRefineMode('erase');
+$('#restoreMode').onclick=()=>setRefineMode('restore');
+$('#brushSize').oninput=event=> {
+  $('#brushSizeOut').value=event.target.value
+};
+$('#refineZoom').oninput=event=> {
+  $('#refineZoomOut').value=event.target.value+'%';
+  sizeRefineCanvas()
+};
+$('#undoRefine').onclick=()=> {
+  if(!refineState.previous)return;
+  refineContext.clearRect(0, 0, refineCanvas.width, refineCanvas.height);
+  refineContext.drawImage(refineState.previous, 0, 0);
+  refineState.previous=null;
+  $('#undoRefine').disabled=true
+};
+$('#applyRefine').onclick=()=> {
+  const layer=state.layers.find(item=>item.id===refineState.layerId);
+  if(!layer)return closeRefineEditor();
+  layer.img=cloneCanvas(refineCanvas);
+  layer.url=makeThumbnail(layer.img);
+  layer.cutout=true;
+  closeRefineEditor();
+  renderLayers();
+  draw();
+  setCutoutStatus('細かい修正を反映しました', 'success')
+};
+$('#closeRefine').onclick=closeRefineEditor;
+$('#cancelRefine').onclick=closeRefineEditor;
+$('#refineDialog').addEventListener('close', ()=> {
+  refineState.layerId=null;
+  refineState.source=null;
+  refineState.previous=null;
+  refineState.drawing=false;
+  refineState.lastPoint=null
+});
+$('#refineDialog').addEventListener('click', event=> {
+  if(event.target===$('#refineDialog'))closeRefineEditor()
+});
+refineCanvas.addEventListener('pointerdown', startRefineStroke, {passive:false});
+refineCanvas.addEventListener('pointermove', moveRefineStroke, {passive:false});
+refineCanvas.addEventListener('pointerup', endRefineStroke, {passive:false});
+refineCanvas.addEventListener('pointercancel', endRefineStroke, {passive:false});
+window.addEventListener('resize', ()=> {
+  if($('#refineDialog').open)sizeRefineCanvas()
+});
 function moveLayer(step) {
   const l=selectedLayer();
   if(!l)return;
