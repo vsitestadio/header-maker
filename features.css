@@ -157,12 +157,13 @@
   line-height:1.45
 }
 .cutout-actions {
-  display:grid;
-  grid-template-columns:1fr auto;
+  display:flex;
+  flex-wrap:wrap;
   gap:7px;
   margin-top:10px
 }
 .cutout-actions button {
+  flex:1 1 0;
   min-height:38px;
   padding:7px 10px;
   border-radius:9px;
@@ -172,10 +173,16 @@
   cursor:pointer
 }
 .cutout-button {
+  flex-basis:100% !important;
   border:0;
   color:#fff;
   background:linear-gradient(135deg,#0eafd2,#22c9e5);
   box-shadow:0 8px 18px rgba(16,177,211,.2)
+}
+.refine-cutout-button {
+  border:1px solid #15bada;
+  color:#087f9e;
+  background:#fff
 }
 .restore-cutout-button {
   border:1px solid #c9dce5;
@@ -234,6 +241,181 @@
   color:inherit;
   text-underline-offset:2px
 }
+.refine-dialog {
+  width:min(920px,94vw);
+  max-width:none;
+  max-height:94dvh;
+  margin:auto;
+  padding:0;
+  overflow:hidden;
+  border:0;
+  border-radius:22px;
+  color:#172331;
+  background:#fff;
+  box-shadow:0 30px 90px rgba(15,43,59,.3)
+}
+.refine-dialog::backdrop {
+  background:rgba(12,29,40,.68);
+  backdrop-filter:blur(5px)
+}
+.refine-dialog-content {
+  display:flex;
+  max-height:94dvh;
+  padding:22px;
+  flex-direction:column
+}
+.refine-dialog-head {
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px
+}
+.refine-dialog-head h2 {
+  margin:2px 0 0;
+  font-size:22px;
+  line-height:1.35
+}
+.refine-eyebrow {
+  margin:0;
+  color:#09a9d2;
+  font-size:11px;
+  font-weight:900;
+  letter-spacing:.12em
+}
+.refine-close {
+  display:grid;
+  flex:0 0 auto;
+  width:38px;
+  height:38px;
+  padding:0;
+  place-items:center;
+  border:0;
+  border-radius:50%;
+  color:#243745;
+  background:#edf4f7;
+  font:inherit;
+  font-size:24px;
+  cursor:pointer
+}
+.refine-guide {
+  margin:9px 0 14px;
+  color:#607583;
+  font-size:14px;
+  line-height:1.65
+}
+.refine-toolbar {
+  display:grid;
+  grid-template-columns:auto minmax(170px,1fr) minmax(170px,1fr);
+  align-items:end;
+  gap:12px;
+  margin-bottom:14px
+}
+.refine-mode {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:6px;
+  padding:4px;
+  border-radius:11px;
+  background:#edf4f7
+}
+.refine-mode button {
+  min-height:38px;
+  padding:7px 12px;
+  border:0;
+  border-radius:8px;
+  color:#57707d;
+  background:transparent;
+  font:inherit;
+  font-size:13px;
+  font-weight:800;
+  cursor:pointer
+}
+.refine-mode button.active {
+  color:#087f9e;
+  background:#fff;
+  box-shadow:0 3px 12px rgba(24,70,92,.1)
+}
+.refine-range {
+  display:grid;
+  gap:7px;
+  color:#435563;
+  font-size:12px;
+  font-weight:800
+}
+.refine-range span {
+  display:flex;
+  justify-content:space-between;
+  gap:12px
+}
+.refine-range output {
+  color:#078dad
+}
+.refine-range input {
+  width:100%;
+  accent-color:#18bfe2
+}
+.refine-stage {
+  min-height:260px;
+  max-height:52dvh;
+  padding:16px;
+  overflow:auto;
+  overscroll-behavior:contain;
+  border:1px solid #d7e5ec;
+  border-radius:15px;
+  background-color:#eff4f6;
+  background-image:
+    linear-gradient(45deg,#dfe8ec 25%,transparent 25%),
+    linear-gradient(-45deg,#dfe8ec 25%,transparent 25%),
+    linear-gradient(45deg,transparent 75%,#dfe8ec 75%),
+    linear-gradient(-45deg,transparent 75%,#dfe8ec 75%);
+  background-position:0 0,0 10px,10px -10px,-10px 0;
+  background-size:20px 20px
+}
+.refine-stage canvas {
+  display:block;
+  max-width:none;
+  margin:auto;
+  border-radius:5px;
+  box-shadow:0 8px 25px rgba(24,58,76,.16);
+  cursor:crosshair;
+  touch-action:none
+}
+.refine-help {
+  margin:9px 0 0;
+  color:#6d808c;
+  font-size:12px;
+  line-height:1.5
+}
+.refine-dialog-actions {
+  display:grid;
+  grid-template-columns:auto auto auto minmax(180px,1fr);
+  gap:8px;
+  margin-top:14px
+}
+.refine-dialog-actions button {
+  min-height:44px;
+  padding:9px 16px;
+  border-radius:10px;
+  font:inherit;
+  font-size:13px;
+  font-weight:900;
+  cursor:pointer
+}
+.refine-secondary {
+  border:1px solid #d2e0e7;
+  color:#405663;
+  background:#fff
+}
+.refine-secondary:disabled {
+  cursor:not-allowed;
+  opacity:.45
+}
+.refine-apply {
+  border:0;
+  color:#fff;
+  background:linear-gradient(135deg,#0eafd2,#22c9e5);
+  box-shadow:0 9px 20px rgba(16,177,211,.2)
+}
 .text-tools {
   margin-top:12px;
   padding:12px;
@@ -269,7 +451,48 @@
     grid-template-columns:1fr
   }
   .cutout-actions {
-    grid-template-columns:1fr
+    display:grid;
+    grid-template-columns:1fr 1fr
+  }
+  .cutout-button {
+    grid-column:1/-1
+  }
+  .refine-dialog {
+    width:100vw;
+    max-height:100dvh;
+    border-radius:18px 18px 0 0
+  }
+  .refine-dialog-content {
+    max-height:100dvh;
+    padding:16px 14px
+  }
+  .refine-dialog-head h2 {
+    font-size:19px
+  }
+  .refine-guide {
+    margin-bottom:11px;
+    font-size:13px
+  }
+  .refine-toolbar {
+    grid-template-columns:1fr 1fr
+  }
+  .refine-mode {
+    grid-column:1/-1
+  }
+  .refine-stage {
+    min-height:220px;
+    max-height:48dvh;
+    padding:10px
+  }
+  .refine-dialog-actions {
+    grid-template-columns:1fr 1fr
+  }
+  .refine-apply {
+    grid-column:1/-1;
+    grid-row:1
+  }
+  #cancelRefine {
+    grid-column:1/-1
   }
   .preview-head span {
     white-space:normal
