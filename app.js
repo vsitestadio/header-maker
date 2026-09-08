@@ -599,7 +599,7 @@ canvas.addEventListener('pointermove', pointerMove, {
 canvas.addEventListener('pointerup', pointerEnd);
 canvas.addEventListener('pointercancel', pointerEnd);
 let resultUrl=null, resultFile=null;
-const xShareText='ヘッダーメーカーでオリジナルヘッダーを作りました！\n\n#ヘッダー作成 #Xヘッダー';
+const xShareText='ヘッダーメーカーでオリジナルヘッダーを作りました！\n\n@VsiteStadio #ヘッダー作成 #Xヘッダー';
 function canShareResultFile() {
   return Boolean(
     resultFile&&
@@ -674,4 +674,3 @@ syncText();
 renderLayers();
 syncPreview();
 draw();
-
