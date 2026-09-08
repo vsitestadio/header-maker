@@ -21,6 +21,7 @@ const transformersModule='https://cdn.jsdelivr.net/npm/@huggingface/transformers
 const animeCutoutModel='BritishWerewolf/IS-Net-Anime';
 let backgroundRemovalLoader=null;
 let animeBackgroundRemovalLoader=null;
+let animeBackgroundRemovalDevice=null;
 let cutoutBusy=false;
 function fontName() {
   return state.text.font==='serif'?'"Yu Mincho",serif':state.text.font==='round'?'"Hiragino Maru Gothic ProN","Yu Gothic",sans-serif':'"Noto Sans JP","Yu Gothic",sans-serif'
@@ -477,7 +478,7 @@ function syncCutoutMode() {
   });
   $('#animeRetention').classList.toggle('hidden', !anime);
   $('#cutoutModeNote').textContent=anime
-    ?'全身優先では、背景を少し残してでも髪・服・体を残しやすくします。初回のみ約180MBを読み込みます。'
+    ?'全身優先では髪・服・体を広めに残します。処理に失敗した場合は、端末に合う互換モードで自動的にもう一度試します。'
     :'軽くて速い写真向けAIです。髪や服が消えた場合は精密補正で戻せます。';
   syncLayerTools();
   if(anime)syncCutoutRetention()
@@ -495,11 +496,13 @@ function setCutoutBusy(busy) {
     input.disabled=busy
   })
 }
-function makeProcessingCanvas(source) {
+function makeProcessingCanvas(source, mode='photo') {
   const sourceWidth=source.naturalWidth||source.width;
   const sourceHeight=source.naturalHeight||source.height;
   const mobile=window.matchMedia('(max-width: 700px)').matches;
-  const maxSide=mobile?1600:2200;
+  const maxSide=mode==='anime'
+    ?(mobile?1200:1400)
+    :(mobile?1600:2200);
   const rate=Math.min(1, maxSide/Math.max(sourceWidth, sourceHeight));
   const work=document.createElement('canvas');
   work.width=Math.max(1, Math.round(sourceWidth*rate));
@@ -586,37 +589,41 @@ function updateAnimeCutoutProgress(event) {
     setCutoutStatus(`イラスト精密AIを読み込み中${value===null?'…':`… ${value}%`}`, 'loading')
   }
 }
-async function createAnimeBackgroundRemoval() {
+async function createAnimeBackgroundRemoval(forceCompatible=false) {
   const module=await import(transformersModule);
   if(typeof module.pipeline!=='function')throw new Error('イラスト精密AIを読み込めませんでした');
   const options= {
     dtype:'fp32',
     progress_callback:updateAnimeCutoutProgress
   };
-  if(navigator.gpu) {
+  if(!forceCompatible&&navigator.gpu) {
     try {
-      return await module.pipeline('image-segmentation', animeCutoutModel, {
+      const segmenter=await module.pipeline('image-segmentation', animeCutoutModel, {
         ...options,
         device:'webgpu'
-      })
+      });
+      animeBackgroundRemovalDevice='webgpu';
+      return segmenter
     }
     catch(error) {
       console.warn('WebGPU cutout unavailable. Falling back to WASM.', error)
     }
   }
-  return module.pipeline('image-segmentation', animeCutoutModel, options)
+  const segmenter=await module.pipeline('image-segmentation', animeCutoutModel, options);
+  animeBackgroundRemovalDevice='wasm';
+  return segmenter
 }
-async function getAnimeBackgroundRemoval() {
+async function getAnimeBackgroundRemoval(forceCompatible=false) {
   if(!animeBackgroundRemovalLoader) {
-    animeBackgroundRemovalLoader=createAnimeBackgroundRemoval().catch(error=> {
+    animeBackgroundRemovalLoader=createAnimeBackgroundRemoval(forceCompatible).catch(error=> {
       animeBackgroundRemovalLoader=null;
+      animeBackgroundRemovalDevice=null;
       throw error
     })
   }
   return animeBackgroundRemovalLoader
 }
-async function releaseAnimeBackgroundRemoval(segmenter) {
-  if(!window.matchMedia('(max-width: 700px)').matches)return;
+async function disposeAnimeBackgroundRemoval(segmenter) {
   try {
     if(typeof segmenter?.dispose==='function')await segmenter.dispose()
   }
@@ -624,8 +631,13 @@ async function releaseAnimeBackgroundRemoval(segmenter) {
     console.warn('Could not release the precision cutout model.', error)
   }
   finally {
-    animeBackgroundRemovalLoader=null
+    animeBackgroundRemovalLoader=null;
+    animeBackgroundRemovalDevice=null
   }
+}
+async function releaseAnimeBackgroundRemoval(segmenter) {
+  if(!window.matchMedia('(max-width: 700px)').matches)return;
+  await disposeAnimeBackgroundRemoval(segmenter)
 }
 function bodySafeAlpha(value) {
   if(value<=2)return 0;
@@ -703,35 +715,50 @@ function applySegmentationMask(source, mask, retainBody=false) {
   resultContext.globalCompositeOperation='source-over';
   return result
 }
+async function requestAnimeMask(segmenter, objectUrl, options) {
+  const output=await segmenter(objectUrl, options);
+  const segment=Array.isArray(output)
+    ?output.find(item=>item?.mask)||output[0]
+    :output;
+  const mask=segment?.mask||segment;
+  if(!mask)throw new Error('イラスト精密AIの結果を取得できませんでした');
+  return mask
+}
 async function runAnimeCutout(processingCanvas) {
   const retainBody=selectedCutoutRetention()==='body';
-  const [segmenter, inputBlob]=await Promise.all([
-    getAnimeBackgroundRemoval(),
-    canvasToBlob(processingCanvas)
-  ]);
+  const inputBlob=await canvasToBlob(processingCanvas);
   const objectUrl=URL.createObjectURL(inputBlob);
+  let segmenter=null;
   try {
+    segmenter=await getAnimeBackgroundRemoval();
     setCutoutStatus(
       retainBody
         ?'服や体を消しすぎないよう、全身を広めに判定しています…'
         :'背景を優先して輪郭を精密に判定しています…',
       'loading'
     );
-    const output=await segmenter(objectUrl, {
+    const options= {
       threshold:0,
       mask_threshold:retainBody ? .04 : .22,
       target_sizes:[[processingCanvas.height, processingCanvas.width]]
-    });
-    const segment=Array.isArray(output)
-      ?output.find(item=>item?.mask)||output[0]
-      :output;
-    const mask=segment?.mask||segment;
-    if(!mask)throw new Error('イラスト精密AIの結果を取得できませんでした');
+    };
+    let mask;
+    try {
+      mask=await requestAnimeMask(segmenter, objectUrl, options)
+    }
+    catch(error) {
+      if(animeBackgroundRemovalDevice!=='webgpu')throw error;
+      console.warn('WebGPU inference failed. Retrying the anime cutout with WASM.', error);
+      setCutoutStatus('端末と相性のよい互換モードでもう一度判定しています…', 'loading');
+      await disposeAnimeBackgroundRemoval(segmenter);
+      segmenter=await getAnimeBackgroundRemoval(true);
+      mask=await requestAnimeMask(segmenter, objectUrl, options)
+    }
     return canvasToBlob(applySegmentationMask(processingCanvas, mask, retainBody))
   }
   finally {
     URL.revokeObjectURL(objectUrl);
-    await releaseAnimeBackgroundRemoval(segmenter)
+    if(segmenter)await releaseAnimeBackgroundRemoval(segmenter)
   }
 }
 async function runPhotoCutout(processingCanvas) {
@@ -769,19 +796,10 @@ async function removeSelectedLayerBackground() {
   setCutoutStatus(mode==='anime'?'イラスト精密AIを準備しています。初回は時間がかかります…':'写真向けAIを準備しています。初回のみ少し時間がかかります…', 'loading');
   try {
     const sourceCanvas=layer.originalImg||layer.img;
-    const processingCanvas=makeProcessingCanvas(sourceCanvas);
+    const processingCanvas=makeProcessingCanvas(sourceCanvas, mode);
     let resultBlob;
-    let fallback=false;
     if(mode==='anime') {
-      try {
-        resultBlob=await runAnimeCutout(processingCanvas)
-      }
-      catch(error) {
-        console.error('Precision anime background removal failed:', error);
-        setCutoutStatus('精密AIを利用できないため、写真向けAIに切り替えています…', 'loading');
-        resultBlob=await runPhotoCutout(processingCanvas);
-        fallback=true
-      }
+      resultBlob=await runAnimeCutout(processingCanvas)
     } else {
       resultBlob=await runPhotoCutout(processingCanvas)
     }
@@ -797,19 +815,22 @@ async function removeSelectedLayerBackground() {
     renderLayers();
     draw();
     completion= {
-      message:fallback
-        ?'写真向けAIで切り抜きました。消えた体や服は精密補正で戻せます'
-        :(mode==='anime'
-          ?(selectedCutoutRetention()==='body'
-            ?'全身を広めに残して切り抜きました。残った背景は精密補正で消せます'
-            :'背景を優先して切り抜きました。消えた部分は精密補正で戻せます')
-          :'背景を削除しました。消えた部分は精密補正で戻せます'),
+      message:mode==='anime'
+        ?(selectedCutoutRetention()==='body'
+          ?'イラスト用AIで全身を広めに残しました。残った背景は精密補正で消せます'
+          :'イラスト用AIで背景を優先して切り抜きました')
+        :'背景を削除しました。消えた部分は精密補正で戻せます',
       type:'success'
     }
   }
   catch(error) {
     console.error('Background removal failed:', error);
-    completion={message:'切り抜きに失敗しました。通信環境を確認して、もう一度お試しください', type:'error'}
+    completion= {
+      message:mode==='anime'
+        ?'イラスト用AIで切り抜けませんでした。写真用AIには切り替えず、今回の結果は反映していません'
+        :'切り抜きに失敗しました。通信環境を確認して、もう一度お試しください',
+      type:'error'
+    }
   }
   finally {
     setCutoutBusy(false);
