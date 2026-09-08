@@ -65,6 +65,25 @@
             <button id="layerBack" type="button">背面へ</button>
             <button id="layerFront" type="button">前面へ</button>
           </div>
+          <div class="cutout-panel">
+            <div class="cutout-heading">
+              <span aria-hidden="true">✦</span>
+              <div>
+                <b>ワンタップ切り抜き</b>
+                <small>AIが被写体を残して背景を透明にします</small>
+              </div>
+            </div>
+            <div class="cutout-actions">
+              <button id="removeBackgroundAI" class="cutout-button" type="button">AIで背景を削除</button>
+              <button id="restoreBackground" class="restore-cutout-button hidden" type="button">元画像に戻す</button>
+            </div>
+            <progress id="cutoutProgress" class="cutout-progress hidden" max="100" value="0"></progress>
+            <p id="cutoutStatus" class="cutout-status" role="status">人物・キャラクター画像におすすめです</p>
+            <p class="cutout-credit">
+              画像は端末内で処理します。利用技術：
+              <a href="https://github.com/imgly/background-removal-js" target="_blank" rel="noopener noreferrer">IMG.LY Background Removal</a>
+            </p>
+          </div>
           <button id="removeFg" class="text-button">選択画像を削除</button>
         </div>
 
