@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="X・YouTube・Discord向けのヘッダー画像をブラウザ上で作成し、PNGで保存できる無料ツールです。">
+  <title>Header Atelier｜ヘッダー作成ツール</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="save-dialog.css">
+  <link rel="stylesheet" href="features.css">
+  <link rel="stylesheet" href="theme-navy.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#"><span>Header Maker</span></a>
+    <span class="save-note">ブラウザだけで作成・保存</span>
+  </header>
+
+  <main class="app-shell">
+    <section class="intro">
+      <h1>ヘッダーメーカー<br></h1>
+      <p>使う場所を選んで、画像と文字を重ねるだけ。完成したデザインはPNGでダウンロードできます。</p>
+    </section>
+
+    <section class="workspace" aria-label="ヘッダー編集画面">
+      <aside class="panel controls">
+        <div class="step"><span>01</span><div><b>サイズを選ぶ</b><small>使いたいサービス</small></div></div>
+        <div class="platform-tabs" role="radiogroup" aria-label="サービス">
+          <button class="platform active" data-platform="x" aria-pressed="true">X<small>1500 × 500</small></button>
+          <button class="platform" data-platform="youtube" aria-pressed="false">YouTube<small>2560 × 1440</small></button>
+          <button class="platform" data-platform="discord" aria-pressed="false">Discord<small>960 × 540</small></button>
+        </div>
+        <label class="switch-row"><span><b>文字・ロゴの安全範囲を表示</b><small>点線の内側なら、スマホでも切れにくくボタンとも重なりにくいです</small></span><input id="safeArea" type="checkbox" checked></label>
+
+        <div class="divider"></div>
+        <div class="step"><span>02</span><div><b>背景を決める</b><small>色または画像</small></div></div>
+        <div class="field-row">
+          <label class="color-field">背景色<input id="bgColor" type="color" value="#102a38"></label>
+          <label class="upload-button"><input id="bgUpload" type="file" accept="image/*">背景画像を選ぶ</label>
+        </div>
+        <label class="switch-row"><span><b>グラデーションを使う</b><small>単色から2色の背景に変更</small></span><input id="gradientToggle" type="checkbox"></label>
+        <div id="gradientTools" class="gradient-tools hidden">
+          <div class="field-row">
+            <label class="color-field">2色目<input id="gradientColor" type="color" value="#20d9ff"></label>
+            <label class="select-field">向き<select id="gradientDirection"><option value="right">左から右</option><option value="bottom">上から下</option><option value="diagonal">斜め</option><option value="radial">中央から外側</option></select></label>
+          </div>
+          <label>色の境目 <output id="gradientBalanceOut">50%</output><input id="gradientBalance" type="range" min="10" max="90" value="50"></label>
+        </div>
+        <div id="bgTools" class="range-group hidden">
+          <label>背景の拡大 <output id="bgScaleOut">100%</output><input id="bgScale" type="range" min="100" max="250" value="100"></label>
+          <button id="removeBg" class="text-button">背景画像を削除</button>
+        </div>
+
+        <div class="divider"></div>
+        <div class="step"><span>03</span><div><b>素材を重ねる</b><small>人物・ロゴを複数追加できます</small></div></div>
+        <label class="upload-button wide"><input id="fgUpload" type="file" accept="image/*">画像を1枚追加する</label>
+        <p id="uploadStatus" class="upload-status" role="status">繰り返し追加すると複数画像を配置できます</p>
+        <div id="layerList" class="layer-list"><p>追加された画像はありません</p></div>
+        <div id="layerTools" class="range-group hidden">
+          <b id="selectedLayerName" class="selected-layer-name">選択中の画像</b>
+          <label>画像サイズ <output id="fgScaleOut">55%</output><input id="fgScale" type="range" min="10" max="200" value="55"></label>
+          <label>回転 <output id="rotationOut">0°</output><input id="rotation" type="range" min="-180" max="180" value="0"></label>
+          <div class="transform-buttons">
+            <button id="flipX" type="button">左右反転</button>
+            <button id="layerBack" type="button">背面へ</button>
+            <button id="layerFront" type="button">前面へ</button>
+          </div>
+          <div class="cutout-panel">
+            <div class="cutout-heading">
+              <span aria-hidden="true">✦</span>
+              <div>
+                <b>ワンタップ切り抜き</b>
+                <small>AIが被写体を残して背景を透明にします</small>
+              </div>
+            </div>
+            <div class="cutout-actions">
+              <button id="removeBackgroundAI" class="cutout-button" type="button">AIで背景を削除</button>
+              <button id="restoreBackground" class="restore-cutout-button hidden" type="button">元画像に戻す</button>
+            </div>
+            <progress id="cutoutProgress" class="cutout-progress hidden" max="100" value="0"></progress>
+            <p id="cutoutStatus" class="cutout-status" role="status">人物・キャラクター画像におすすめです</p>
+            <p class="cutout-credit">
+              画像は端末内で処理します。利用技術：
+              <a href="https://github.com/imgly/background-removal-js" target="_blank" rel="noopener noreferrer">IMG.LY Background Removal</a>
+            </p>
+          </div>
+          <button id="removeFg" class="text-button">選択画像を削除</button>
+        </div>
+
+        <div class="divider"></div>
+        <div class="step"><span>04</span><div><b>文字を入れる</b><small>名前やメッセージ</small><small class="note">文字を表示しない場合は、空欄にしてください。</small></div></div>
+        <label class="input-field">メインテキスト<input id="mainText" type="text" value="YOUR NAME" placeholder="名前・タイトルなど" maxlength="40"></label>
+        <label class="input-field">サブテキスト<input id="subText" type="text" value="Streamer / Creator" placeholder="補足メッセージなど（任意）" maxlength="60"></label>
+        <div class="field-row">
+          <label class="color-field">文字色<input id="textColor" type="color" value="#eefbff"></label>
+          <label class="select-field">フォント<select id="fontFamily"><option value="sans">ゴシック</option><option value="serif">明朝</option><option value="round">丸ゴシック</option></select></label>
+        </div>
+        <div class="text-tools">
+          <div class="field-row">
+            <label class="select-field">文字揃え<select id="textAlign"><option value="left">左揃え</option><option value="center">中央揃え</option><option value="right">右揃え</option></select></label>
+            <label class="select-field">太さ<select id="fontWeight"><option value="900">太字</option><option value="700">標準</option><option value="500">細字</option></select></label>
+          </div>
+          <label>メイン文字サイズ <output id="mainSizeOut">100%</output><input id="mainSize" type="range" min="40" max="180" value="100"></label>
+          <label>サブ文字サイズ <output id="subSizeOut">100%</output><input id="subSize" type="range" min="40" max="180" value="100"></label>
+          <label>メイン・サブの間隔 <output id="textGapOut">78</output><input id="textGap" type="range" min="10" max="220" value="78"></label>
+          <label>文字間隔 <output id="letterSpacingOut">0</output><input id="letterSpacing" type="range" min="-3" max="20" value="0"></label>
+          <div class="field-row">
+            <label class="color-field">縁取り色<input id="strokeColor" type="color" value="#061018"></label>
+            <label class="color-field">影の色<input id="shadowColor" type="color" value="#000000"></label>
+          </div>
+          <label>縁取り <output id="strokeWidthOut">0</output><input id="strokeWidth" type="range" min="0" max="16" value="0"></label>
+          <label>影の強さ <output id="shadowBlurOut">0</output><input id="shadowBlur" type="range" min="0" max="30" value="0"></label>
+          <label>横位置 <output id="textXOut">23%</output><input id="textX" type="range" min="0" max="100" value="23"></label>
+          <label>縦位置 <output id="textYOut">50%</output><input id="textY" type="range" min="0" max="100" value="50"></label>
+        </div>
+      </aside>
+
+      <div class="editor-stack">
+        <section class="preview-card">
+          <div class="preview-sticky">
+            <div class="preview-head"><div><b>プレビュー</b><small id="sizeLabel">X ヘッダー・1500 × 500 px</small></div><span>画像をタップして選択・2本指で拡大縮小</span></div>
+            <p id="previewNote" class="preview-note mobile-first-note">スマホ表示を基準に編集中（完成画像は1500 × 500px）</p>
+            <div id="canvasWrap" class="canvas-wrap preview-mobile"><canvas id="canvas" width="1500" height="500" aria-label="作成中のヘッダープレビュー"></canvas></div>
+            <p class="gesture-help">タップで画像を選択 ／ 1本指で移動 ／ 2本指で拡大・縮小</p>
+          </div>
+        </section>
+        <section class="template-card">
+          <div class="templates-head"><b>レイアウトテンプレート</b><small>クリックすると配置が変わります</small></div>
+          <div class="template-grid">
+            <button class="template active" data-template="left"><i><em></em><strong></strong></i><span>スタンダード</span></button>
+            <button class="template" data-template="center"><i class="center"><em></em><strong></strong></i><span>センター</span></button>
+            <button class="template" data-template="split"><i class="split"><em></em><strong></strong></i><span>スプリット</span></button>
+          </div>
+          <button id="download" class="download">PNGでダウンロード <span>↓</span></button>
+          <p class="privacy">画像は端末内だけで処理され、外部へ送信されません。</p>
+        </section>
+      </div>
+    </section>
+  </main>
+  <dialog id="saveDialog" class="save-dialog">
+    <button id="closeDialog" class="dialog-close" aria-label="閉じる">×</button>
+    <div class="dialog-content">
+      <p class="eyebrow">YOUR HEADER IS READY</p>
+      <h2>画像が完成しました</h2>
+      <p class="ios-guide">iPhoneでは、下の画像を長押しして「写真に保存」を選べます。</p>
+      <img id="resultImage" alt="完成したヘッダー画像">
+      <p class="x-share-guide">完成した画像をそのまま投稿する場合は、共有先からXを選んでください。</p>
+      <div class="dialog-actions">
+        <button id="shareX" class="x-share-button" type="button"><span aria-hidden="true">𝕏</span> 画像付きでXにシェア</button>
+        <button id="shareImage" class="share-button" type="button">その他の方法で共有</button>
+        <a id="saveImage" class="download-link" download="header.png">画像をダウンロード</a>
+      </div>
+      <p id="shareFallbackNote" class="share-fallback-note hidden" role="status">
+        この端末では画像をXへ直接渡せません。先に画像を保存し、開いた投稿画面で添付してください。
+      </p>
+      <a id="openXPost" class="open-x-post hidden" href="#" target="_blank" rel="noopener noreferrer">Xの投稿画面を開く</a>
+    </div>
+  </dialog>
+  <script src="app.js"></script>
+</body>
+</html>
