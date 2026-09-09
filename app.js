@@ -593,10 +593,13 @@ async function createAnimeBackgroundRemoval(forceCompatible=false) {
   const module=await import(transformersModule);
   if(
     typeof module.AutoModel?.from_pretrained!=='function'||
-    typeof module.AutoImageProcessor?.from_pretrained!=='function'||
-    typeof module.RawImage?.read!=='function'
+    typeof module.RawImage?.read!=='function'||
+    typeof module.Tensor!=='function'
   ) {
     throw new Error('イラスト精密AIを読み込めませんでした')
+  }
+  if(!self.crossOriginIsolated&&module.env?.backends?.onnx?.wasm) {
+    module.env.backends.onnx.wasm.numThreads=1
   }
   const loadRuntime=async device=> {
     const options= {
@@ -604,14 +607,11 @@ async function createAnimeBackgroundRemoval(forceCompatible=false) {
       progress_callback:updateAnimeCutoutProgress
     };
     if(device==='webgpu')options.device='webgpu';
-    const processor=await module.AutoImageProcessor.from_pretrained(animeCutoutModel, {
-      progress_callback:updateAnimeCutoutProgress
-    });
     const model=await module.AutoModel.from_pretrained(animeCutoutModel, options);
     return {
       model,
-      processor,
       RawImage:module.RawImage,
+      Tensor:module.Tensor,
       device
     }
   };
@@ -661,25 +661,40 @@ function bodySafeAlpha(value) {
   const eased=confidence*confidence*(3-2*confidence);
   return Math.max(value, Math.round(eased*255))
 }
-function cropMaskPadding(alphaCanvas, reshapedInputSize) {
+function cropMaskPadding(alphaCanvas, crop) {
+  const left=clamp(
+    Math.round(Number(crop?.x)||0),
+    0,
+    alphaCanvas.width-1
+  );
+  const top=clamp(
+    Math.round(Number(crop?.y)||0),
+    0,
+    alphaCanvas.height-1
+  );
   const height=clamp(
-    Math.round(Number(reshapedInputSize?.[0])||alphaCanvas.height),
+    Math.round(Number(crop?.h)||alphaCanvas.height),
     1,
-    alphaCanvas.height
+    alphaCanvas.height-top
   );
   const width=clamp(
-    Math.round(Number(reshapedInputSize?.[1])||alphaCanvas.width),
+    Math.round(Number(crop?.w)||alphaCanvas.width),
     1,
-    alphaCanvas.width
+    alphaCanvas.width-left
   );
-  if(width===alphaCanvas.width&&height===alphaCanvas.height)return alphaCanvas;
+  if(
+    left===0&&
+    top===0&&
+    width===alphaCanvas.width&&
+    height===alphaCanvas.height
+  )return alphaCanvas;
   const cropped=document.createElement('canvas');
   cropped.width=width;
   cropped.height=height;
   cropped.getContext('2d').drawImage(
     alphaCanvas,
-    0,
-    0,
+    left,
+    top,
     width,
     height,
     0,
@@ -689,7 +704,7 @@ function cropMaskPadding(alphaCanvas, reshapedInputSize) {
   );
   return cropped
 }
-function maskToAlphaCanvas(mask, retainBody=false, reshapedInputSize=null) {
+function maskToAlphaCanvas(mask, retainBody=false, crop=null) {
   const dimensions=Array.from(mask?.dims||[]);
   const width=Number(mask?.width||dimensions.at(-1));
   const height=Number(mask?.height||dimensions.at(-2));
@@ -702,11 +717,18 @@ function maskToAlphaCanvas(mask, retainBody=false, reshapedInputSize=null) {
   const sourceData=mask.data;
   if(sourceData&&sourceData.length>=width*height) {
     const channels=Math.max(1, Math.round(sourceData.length/(width*height)));
-    let maximum=0;
+    let minimum=Infinity;
+    let maximum=-Infinity;
     for(let index=0; index<sourceData.length; index+=channels) {
-      maximum=Math.max(maximum, Number(sourceData[index])||0)
+      const value=Number(sourceData[index]);
+      if(!Number.isFinite(value))continue;
+      minimum=Math.min(minimum, value);
+      maximum=Math.max(maximum, value)
     }
-    const multiplier=maximum<=1?255:1;
+    const range=maximum-minimum;
+    if(!Number.isFinite(range)||range<=Number.EPSILON) {
+      throw new Error('イラスト精密AIが被写体を検出できませんでした')
+    }
     for(let pixel=0; pixel<width*height; pixel++) {
       const sourceIndex=pixel*channels;
       let value;
@@ -719,7 +741,11 @@ function maskToAlphaCanvas(mask, retainBody=false, reshapedInputSize=null) {
         const suppliedAlpha=channels>=4?Number(sourceData[sourceIndex+3]):255;
         value=suppliedAlpha<255?suppliedAlpha:(red+green+blue)/3
       }
-      const rawAlpha=clamp(Math.round((Number(value)||0)*multiplier), 0, 255);
+      const rawAlpha=clamp(
+        Math.round(((Number(value)-minimum)/range)*255),
+        0,
+        255
+      );
       const alpha=retainBody?bodySafeAlpha(rawAlpha):rawAlpha;
       const targetIndex=pixel*4;
       alphaImage.data[targetIndex]=255;
@@ -728,7 +754,7 @@ function maskToAlphaCanvas(mask, retainBody=false, reshapedInputSize=null) {
       alphaImage.data[targetIndex+3]=alpha
     }
     alphaContext.putImageData(alphaImage, 0, 0);
-    return cropMaskPadding(alphaCanvas, reshapedInputSize)
+    return cropMaskPadding(alphaCanvas, crop)
   }
   if(typeof mask.toCanvas!=='function')throw new Error('イラスト精密AIのマスクを画像に変換できませんでした');
   const maskCanvas=mask.toCanvas();
@@ -744,13 +770,13 @@ function maskToAlphaCanvas(mask, retainBody=false, reshapedInputSize=null) {
     pixels.data[index+3]=retainBody?bodySafeAlpha(rawAlpha):rawAlpha
   }
   alphaContext.putImageData(pixels, 0, 0);
-  return cropMaskPadding(alphaCanvas, reshapedInputSize)
+  return cropMaskPadding(alphaCanvas, crop)
 }
 function applySegmentationMask(source, segmentation, retainBody=false) {
   const alpha=maskToAlphaCanvas(
     segmentation.mask,
     retainBody,
-    segmentation.reshapedInputSize
+    segmentation.crop
   );
   const result=document.createElement('canvas');
   result.width=source.width;
@@ -764,17 +790,61 @@ function applySegmentationMask(source, segmentation, retainBody=false) {
   resultContext.globalCompositeOperation='source-over';
   return result
 }
+async function prepareAnimeInput(runtime, image) {
+  const inputSize=1024;
+  const rgb=image.rgb();
+  const scale=inputSize/Math.max(rgb.width, rgb.height);
+  const width=Math.max(1, Math.round(rgb.width*scale));
+  const height=Math.max(1, Math.round(rgb.height*scale));
+  const resized=await rgb.resize(width, height, {resample:2});
+  const left=Math.floor((inputSize-width)/2);
+  const top=Math.floor((inputSize-height)/2);
+  const planeSize=inputSize*inputSize;
+  const tensorData=new Float32Array(planeSize*3);
+  const pixels=resized.data;
+  const channels=resized.channels;
+  for(let y=0; y<height; y++) {
+    for(let x=0; x<width; x++) {
+      const sourceIndex=(y*width+x)*channels;
+      const targetIndex=(y+top)*inputSize+x+left;
+      tensorData[targetIndex]=pixels[sourceIndex]/255-.485;
+      tensorData[planeSize+targetIndex]=pixels[sourceIndex+1]/255-.456;
+      tensorData[planeSize*2+targetIndex]=pixels[sourceIndex+2]/255-.406
+    }
+  }
+  return {
+    pixelValues:new runtime.Tensor(
+      'float32',
+      tensorData,
+      [1, 3, inputSize, inputSize]
+    ),
+    crop: {
+      x:left,
+      y:top,
+      w:width,
+      h:height
+    }
+  }
+}
 async function requestAnimeMask(runtime, objectUrl) {
   const image=await runtime.RawImage.read(objectUrl);
-  const processed=await runtime.processor(image);
-  const output=await runtime.model({
-    img:processed.pixel_values
-  });
+  const prepared=await prepareAnimeInput(runtime, image);
+  let output;
+  try {
+    output=await runtime.model({
+      img:prepared.pixelValues
+    })
+  }
+  finally {
+    if(typeof prepared.pixelValues.dispose==='function') {
+      prepared.pixelValues.dispose()
+    }
+  }
   const mask=output?.mask;
   if(!mask)throw new Error('イラスト精密AIの結果を取得できませんでした');
   return {
     mask,
-    reshapedInputSize:processed.reshaped_input_sizes?.[0]||null
+    crop:prepared.crop
   }
 }
 async function runAnimeCutout(processingCanvas) {
