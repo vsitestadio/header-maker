@@ -244,6 +244,40 @@ body {
 .range-group output {
   color:#278568
 }
+.range-header {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto auto;
+  align-items:center;
+  gap:6px;
+  width:100%
+}
+.range-header>span:first-child {
+  min-width:0
+}
+.range-number {
+  grid-column:auto !important;
+  width:62px !important;
+  height:30px;
+  padding:0 7px;
+  border:1px solid var(--line);
+  border-radius:7px;
+  background:#fff;
+  color:var(--ink);
+  font:inherit;
+  font-size:12px;
+  font-weight:800;
+  text-align:right;
+  accent-color:initial !important
+}
+.range-number:focus {
+  border-color:#2db98d;
+  outline:0;
+  box-shadow:0 0 0 3px rgba(45,185,141,.13)
+}
+.range-control>input[type=range] {
+  grid-column:1/-1;
+  width:100%
+}
 .text-button {
   border:0;
   padding:6px 0 0;

@@ -218,8 +218,10 @@ function syncLayerTools() {
   if(!l)return;
   $('#selectedLayerName').textContent=l.name;
   $('#fgScale').value=Math.round(l.scale*100);
+  $('#fgScaleNumber').value=Math.round(l.scale*100);
   $('#fgScaleOut').value=Math.round(l.scale*100)+'%';
   $('#rotation').value=Math.round(l.rotation);
+  $('#rotationNumber').value=Math.round(l.rotation);
   $('#rotationOut').value=Math.round(l.rotation)+'°';
   $('#refineCutout').classList.toggle('hidden', !l.cutout);
   $('#restoreBackground').classList.toggle('hidden', !l.cutout);
@@ -377,9 +379,6 @@ all('.template').forEach(b=>b.onclick=()=> {
 });
 $('#safeArea').onchange=e=> {
   state.safe=e.target.checked;
-  applyTemplateTextEdge();
-  repositionTemplateLayer();
-  syncText();
   draw()
 };
 $('#bgColor').oninput=e=> {
@@ -399,11 +398,11 @@ $('#gradientDirection').onchange=e=> {
   state.gradientDirection=e.target.value;
   draw()
 };
-$('#gradientBalance').oninput=e=> {
-  state.gradientBalance=e.target.value/100;
-  $('#gradientBalanceOut').value=e.target.value+'%';
+bindNumericRange('#gradientBalance', '#gradientBalanceNumber', value=> {
+  state.gradientBalance=value/100;
+  $('#gradientBalanceOut').value=value+'%';
   draw()
-};
+});
 $('#bgUpload').onchange=e=> {
   const file=e.target.files[0];
   if(!file)return;
@@ -412,11 +411,11 @@ $('#bgUpload').onchange=e=> {
   });
   e.target.value=''
 };
-$('#bgScale').oninput=e=> {
-  state.bgScale=e.target.value/100;
-  $('#bgScaleOut').value=e.target.value+'%';
+bindNumericRange('#bgScale', '#bgScaleNumber', value=> {
+  state.bgScale=value/100;
+  $('#bgScaleOut').value=value+'%';
   draw()
-};
+});
 $('#removeBg').onclick=()=> {
   state.bgImg=null;
   if(state.selected==='bg')state.selected=null;
@@ -435,20 +434,40 @@ $('#layerList').onclick=e=> {
   renderLayers();
   draw()
 };
-$('#fgScale').oninput=e=> {
+bindNumericRange('#fgScale', '#fgScaleNumber', value=> {
   const l=selectedLayer();
   if(!l)return;
-  l.scale=e.target.value/100;
-  $('#fgScaleOut').value=e.target.value+'%';
+  l.scale=value/100;
+  $('#fgScaleOut').value=value+'%';
   draw()
-};
-$('#rotation').oninput=e=> {
+});
+bindNumericRange('#rotation', '#rotationNumber', value=> {
   const l=selectedLayer();
   if(!l)return;
-  l.rotation=Number(e.target.value);
-  $('#rotationOut').value=e.target.value+'°';
+  l.rotation=value;
+  $('#rotationOut').value=value+'°';
   draw()
-};
+});
+function bindNumericRange(rangeId, numberId, apply) {
+  const range=$(rangeId), number=$(numberId);
+  if(!range||!number)return;
+  const update=raw=> {
+    if(raw===null||raw===undefined||raw==='')return;
+    const parsed=Number(raw);
+    if(!Number.isFinite(parsed))return;
+    const value=clamp(parsed, Number(range.min), Number(range.max));
+    const normalized=Number.isInteger(value)?String(value):String(Number(value.toFixed(3)));
+    range.value=normalized;
+    number.value=normalized;
+    apply(value)
+  };
+  range.oninput=e=>update(e.target.value);
+  number.oninput=e=>update(e.target.value);
+  number.onblur=()=> {
+    if(number.value==='')update(range.value)
+  };
+  update(range.value)
+}
 $('#flipX').onclick=()=> {
   const l=selectedLayer();
   if(l) {
@@ -1343,17 +1362,17 @@ $('#refineCutout').onclick=openRefineEditor;
 $('#eraseMode').onclick=()=>setRefineMode('erase');
 $('#restoreMode').onclick=()=>setRefineMode('restore');
 $('#referenceToggle').onclick=()=>setReferenceVisible(!refineState.reference);
-$('#brushSize').oninput=event=> {
-  $('#brushSizeOut').value=event.target.value;
+bindNumericRange('#brushSize', '#brushSizeNumber', value=> {
+  $('#brushSizeOut').value=value;
   syncRefineBrushCursorSize()
-};
-$('#brushHardness').oninput=event=> {
-  $('#brushHardnessOut').value=event.target.value+'%'
-};
-$('#refineZoom').oninput=event=> {
-  $('#refineZoomOut').value=event.target.value+'%';
+});
+bindNumericRange('#brushHardness', '#brushHardnessNumber', value=> {
+  $('#brushHardnessOut').value=value+'%'
+});
+bindNumericRange('#refineZoom', '#refineZoomNumber', value=> {
+  $('#refineZoomOut').value=value+'%';
   sizeRefineCanvas()
-};
+});
 $('#undoRefine').onclick=()=> {
   if(!refineState.previous)return;
   refineState.next=cloneCanvas(refineCanvas);
@@ -1437,7 +1456,9 @@ $('#removeFg').onclick=()=> {
 function syncText() {
   $('#textAlign').value=state.text.align;
   $('#textX').value=Math.round(state.text.pos.x*100);
+  $('#textXNumber').value=Math.round(state.text.pos.x*100);
   $('#textY').value=Math.round(state.text.pos.y*100);
+  $('#textYNumber').value=Math.round(state.text.pos.y*100);
   $('#textXOut').value=Math.round(state.text.pos.x*100)+'%';
   $('#textYOut').value=Math.round(state.text.pos.y*100)+'%'
 }
@@ -1465,27 +1486,27 @@ $('#fontWeight').onchange=e=> {
   state.text.weight=Number(e.target.value);
   draw()
 };
-$('#mainSize').oninput=e=> {
-  state.text.mainSize=e.target.value/100;
-  $('#mainSizeOut').value=e.target.value+'%';
+bindNumericRange('#mainSize', '#mainSizeNumber', value=> {
+  state.text.mainSize=value/100;
+  $('#mainSizeOut').value=value+'%';
   draw()
-};
-$('#subSize').oninput=e=> {
-  state.text.subSize=e.target.value/100;
-  $('#subSizeOut').value=e.target.value+'%';
+});
+bindNumericRange('#subSize', '#subSizeNumber', value=> {
+  state.text.subSize=value/100;
+  $('#subSizeOut').value=value+'%';
   draw()
-};
-function textRange(id, key, out, suffix='') {
-  $(id).oninput=e=> {
-    state.text[key]=Number(e.target.value);
-    $(out).value=e.target.value+suffix;
+});
+function textRange(id, numberId, key, out, suffix='') {
+  bindNumericRange(id, numberId, value=> {
+    state.text[key]=value;
+    $(out).value=value+suffix;
     draw()
-  }
+  })
 }
-textRange('#textGap', 'gap', '#textGapOut');
-textRange('#letterSpacing', 'spacing', '#letterSpacingOut');
-textRange('#strokeWidth', 'strokeWidth', '#strokeWidthOut');
-textRange('#shadowBlur', 'shadowBlur', '#shadowBlurOut');
+textRange('#textGap', '#textGapNumber', 'gap', '#textGapOut');
+textRange('#letterSpacing', '#letterSpacingNumber', 'spacing', '#letterSpacingOut');
+textRange('#strokeWidth', '#strokeWidthNumber', 'strokeWidth', '#strokeWidthOut');
+textRange('#shadowBlur', '#shadowBlurNumber', 'shadowBlur', '#shadowBlurOut');
 $('#strokeColor').oninput=e=> {
   state.text.strokeColor=e.target.value;
   draw()
@@ -1494,16 +1515,16 @@ $('#shadowColor').oninput=e=> {
   state.text.shadowColor=e.target.value;
   draw()
 };
-$('#textX').oninput=e=> {
-  state.text.pos.x=e.target.value/100;
-  $('#textXOut').value=e.target.value+'%';
+bindNumericRange('#textX', '#textXNumber', value=> {
+  state.text.pos.x=value/100;
+  $('#textXOut').value=value+'%';
   draw()
-};
-$('#textY').oninput=e=> {
-  state.text.pos.y=e.target.value/100;
-  $('#textYOut').value=e.target.value+'%';
+});
+bindNumericRange('#textY', '#textYNumber', value=> {
+  state.text.pos.y=value/100;
+  $('#textYOut').value=value+'%';
   draw()
-};
+});
 const pointers=new Map();
 let dragBase=null, pinchBase=null;
 function point(e) {
@@ -1623,7 +1644,7 @@ function canShareResultFile() {
 function xIntentUrl() {
   const pageUrl=location.protocol==='file:'?'':location.href;
   const text=[xShareText, pageUrl].filter(Boolean).join('\n\n');
-  return `https://x.com/intent/tweet?text=${encodeURIComponent(text)}`
+  return `https://x.com/intent/post?text=${encodeURIComponent(text)}`
 }
 function showXFallback() {
   $('#shareFallbackNote').classList.remove('hidden');
@@ -1642,8 +1663,8 @@ function showSaveDialog(blob) {
   $('#saveImage').download=filename;
   const canShareFile=canShareResultFile();
   $('#shareImage').hidden=!canShareFile;
-  $('#shareX').innerHTML=canShareFile?'<span aria-hidden="true">𝕏</span> 画像付きでXにシェア':'<span aria-hidden="true">𝕏</span> Xの投稿画面を開く';
-  $('#shareFallbackNote').classList.toggle('hidden', canShareFile);
+  $('#shareX').innerHTML='<span aria-hidden="true">𝕏</span> Xのポスト画面を開く';
+  $('#shareFallbackNote').classList.remove('hidden');
   $('#openXPost').classList.add('hidden');
   $('#openXPost').href=xIntentUrl();
   $('#saveDialog').showModal()
@@ -1668,12 +1689,9 @@ async function shareResultImage() {
   }
 }
 $('#shareX').onclick=()=> {
-  if(canShareResultFile()) {
-    shareResultImage();
-    return
-  }
-  showXFallback();
-  window.open(xIntentUrl(), '_blank', 'noopener,noreferrer')
+  const url=xIntentUrl();
+  const opened=window.open(url, '_blank', 'noopener,noreferrer');
+  if(!opened)window.location.assign(url)
 };
 $('#shareImage').onclick=shareResultImage;
 $('#closeDialog').onclick=()=>$('#saveDialog').close();

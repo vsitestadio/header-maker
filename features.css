@@ -101,6 +101,37 @@
   width:100%;
   accent-color:#27ae82
 }
+.range-control .range-header,
+.refine-range .range-header {
+  display:grid;
+  grid-column:1/-1;
+  grid-template-columns:minmax(0,1fr) auto auto;
+  align-items:center;
+  gap:6px;
+  width:100%
+}
+.range-control .range-number,
+.refine-range .range-number {
+  grid-column:auto !important;
+  width:62px !important;
+  height:30px;
+  padding:0 7px;
+  border:1px solid var(--line);
+  border-radius:7px;
+  background:#fff;
+  color:var(--ink);
+  font:inherit;
+  font-size:12px;
+  font-weight:800;
+  text-align:right;
+  accent-color:initial !important
+}
+.range-control .range-number:focus,
+.refine-range .range-number:focus {
+  border-color:#18bfe2;
+  outline:0;
+  box-shadow:0 0 0 3px rgba(24,191,226,.14)
+}
 .transform-buttons {
   display:grid;
   grid-template-columns:repeat(3,1fr);
