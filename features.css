@@ -542,7 +542,7 @@
 #refineCanvas {
   z-index:1;
   box-shadow:0 8px 25px rgba(24,58,76,.16);
-  cursor:crosshair;
+  cursor:none;
   touch-action:none
 }
 .refine-stage.panning #refineCanvas {
@@ -556,6 +556,37 @@
 }
 #refineReference.visible {
   opacity:.34
+}
+.refine-brush-cursor {
+  --brush-diameter:36px;
+  position:fixed;
+  z-index:10;
+  left:0;
+  top:0;
+  width:var(--brush-diameter);
+  height:var(--brush-diameter);
+  border:2px solid #fff;
+  border-radius:50%;
+  background:rgba(24,191,226,.13);
+  box-shadow:
+    0 0 0 1px rgba(7,31,43,.9),
+    0 0 0 3px rgba(24,191,226,.75),
+    0 3px 12px rgba(7,31,43,.28);
+  opacity:0;
+  pointer-events:none;
+  transform:translate(-50%,-50%);
+  visibility:hidden
+}
+.refine-brush-cursor.erase {
+  background:rgba(237,93,93,.13);
+  box-shadow:
+    0 0 0 1px rgba(7,31,43,.9),
+    0 0 0 3px rgba(237,93,93,.78),
+    0 3px 12px rgba(7,31,43,.28)
+}
+.refine-brush-cursor.visible {
+  opacity:1;
+  visibility:visible
 }
 .refine-help {
   margin:9px 0 0;

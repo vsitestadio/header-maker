@@ -982,6 +982,7 @@ const refineCanvas=$('#refineCanvas');
 const refineContext=refineCanvas.getContext('2d');
 const refineReference=$('#refineReference');
 const refineReferenceContext=refineReference.getContext('2d');
+const refineBrushCursor=$('#refineBrushCursor');
 const restoreBrushCanvas=document.createElement('canvas');
 const refineState= {
   layerId:null,
@@ -1012,6 +1013,8 @@ function setRefineMode(mode) {
   $('#restoreMode').classList.toggle('active', !erase);
   $('#eraseMode').setAttribute('aria-pressed', String(erase));
   $('#restoreMode').setAttribute('aria-pressed', String(!erase));
+  refineBrushCursor.classList.toggle('erase', erase);
+  refineBrushCursor.classList.toggle('restore', !erase);
   if(!erase)setReferenceVisible(true)
 }
 function setReferenceVisible(visible) {
@@ -1035,7 +1038,39 @@ function sizeRefineCanvas() {
   const displayHeight=Math.round(refineCanvas.height/refineCanvas.width*displayWidth);
   const stack=$('#refineCanvasStack');
   stack.style.width=displayWidth+'px';
-  stack.style.height=displayHeight+'px'
+  stack.style.height=displayHeight+'px';
+  syncRefineBrushCursorSize()
+}
+function syncRefineBrushCursorSize() {
+  if(!refineCanvas.width)return;
+  const rect=refineCanvas.getBoundingClientRect();
+  if(!rect.width)return;
+  const diameter=Math.max(4, Number($('#brushSize').value)*rect.width/refineCanvas.width);
+  refineBrushCursor.style.setProperty('--brush-diameter', diameter+'px')
+}
+function hideRefineBrushCursor() {
+  refineBrushCursor.classList.remove('visible')
+}
+function positionRefineBrushCursor(event) {
+  if(refineState.pan||refineState.pointers.size>=2) {
+    hideRefineBrushCursor();
+    return
+  }
+  const rect=refineCanvas.getBoundingClientRect();
+  const inside=(
+    event.clientX>=rect.left&&
+    event.clientX<=rect.right&&
+    event.clientY>=rect.top&&
+    event.clientY<=rect.bottom
+  );
+  if(!inside) {
+    hideRefineBrushCursor();
+    return
+  }
+  syncRefineBrushCursorSize();
+  refineBrushCursor.style.left=event.clientX+'px';
+  refineBrushCursor.style.top=event.clientY+'px';
+  refineBrushCursor.classList.add('visible')
 }
 function sourceForRefine(layer) {
   if(
@@ -1189,6 +1224,7 @@ function startRefinePointer(event) {
   stage.setPointerCapture?.(event.pointerId);
   refineState.pointers.set(event.pointerId, {x:event.clientX, y:event.clientY});
   if(refineState.pointers.size>=2) {
+    hideRefineBrushCursor();
     cancelStrokeForPan();
     const center=refinePointerCenter();
     refineState.pan= {
@@ -1200,20 +1236,27 @@ function startRefinePointer(event) {
     stage.classList.add('panning');
     return
   }
-  if(event.target===refineCanvas)startRefineStroke(event)
+  if(event.target===refineCanvas) {
+    positionRefineBrushCursor(event);
+    startRefineStroke(event)
+  }
 }
 function moveRefinePointer(event) {
   if(!refineState.pointers.has(event.pointerId))return;
   event.preventDefault();
   refineState.pointers.set(event.pointerId, {x:event.clientX, y:event.clientY});
   if(refineState.pan&&refineState.pointers.size>=2) {
+    hideRefineBrushCursor();
     const stage=$('#refineStage');
     const center=refinePointerCenter();
     stage.scrollLeft=refineState.pan.scrollLeft-(center.x-refineState.pan.x);
     stage.scrollTop=refineState.pan.scrollTop-(center.y-refineState.pan.y);
     return
   }
-  if(refineState.drawing&&refineState.pointers.size===1)moveRefineStroke(event)
+  if(refineState.drawing&&refineState.pointers.size===1) {
+    positionRefineBrushCursor(event);
+    moveRefineStroke(event)
+  }
 }
 function endRefinePointer(event) {
   if(!refineState.pointers.has(event.pointerId))return;
@@ -1227,9 +1270,12 @@ function endRefinePointer(event) {
       refineState.lastPoint=null;
       $('#refineStage').classList.remove('panning')
     }
+    hideRefineBrushCursor();
     return
   }
-  endRefineStroke(event)
+  endRefineStroke(event);
+  if(event.pointerType==='touch')hideRefineBrushCursor();
+  else positionRefineBrushCursor(event)
 }
 function closeRefineEditor() {
   $('#refineDialog').close()
@@ -1239,7 +1285,8 @@ $('#eraseMode').onclick=()=>setRefineMode('erase');
 $('#restoreMode').onclick=()=>setRefineMode('restore');
 $('#referenceToggle').onclick=()=>setReferenceVisible(!refineState.reference);
 $('#brushSize').oninput=event=> {
-  $('#brushSizeOut').value=event.target.value
+  $('#brushSizeOut').value=event.target.value;
+  syncRefineBrushCursorSize()
 };
 $('#brushHardness').oninput=event=> {
   $('#brushHardnessOut').value=event.target.value+'%'
@@ -1289,6 +1336,7 @@ $('#refineDialog').addEventListener('close', ()=> {
   refineState.undoBeforeStroke=null;
   refineState.reference=false;
   refineState.lastPoint=null;
+  hideRefineBrushCursor();
   $('#refineStage').classList.remove('panning')
 });
 $('#refineDialog').addEventListener('click', event=> {
@@ -1298,6 +1346,12 @@ $('#refineStage').addEventListener('pointerdown', startRefinePointer, {passive:f
 $('#refineStage').addEventListener('pointermove', moveRefinePointer, {passive:false});
 $('#refineStage').addEventListener('pointerup', endRefinePointer, {passive:false});
 $('#refineStage').addEventListener('pointercancel', endRefinePointer, {passive:false});
+refineCanvas.addEventListener('pointerenter', positionRefineBrushCursor);
+refineCanvas.addEventListener('pointermove', positionRefineBrushCursor);
+refineCanvas.addEventListener('pointerleave', ()=> {
+  if(!refineState.drawing)hideRefineBrushCursor()
+});
+$('#refineStage').addEventListener('scroll', hideRefineBrushCursor, {passive:true});
 window.addEventListener('resize', ()=> {
   if($('#refineDialog').open)sizeRefineCanvas()
 });

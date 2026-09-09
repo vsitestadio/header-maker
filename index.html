@@ -7,7 +7,7 @@
   <title>Header Atelier｜ヘッダー作成ツール</title>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="save-dialog.css">
-  <link rel="stylesheet" href="features.css?v=20260908-3">
+  <link rel="stylesheet" href="features.css?v=20260909-1">
   <link rel="stylesheet" href="theme-navy.css">
 </head>
 <body>
@@ -230,7 +230,8 @@
           <canvas id="refineReference" aria-hidden="true"></canvas>
         </div>
       </div>
-      <p class="refine-help">スマホでは1本指で修正、2本指でドラッグすると画像を移動できます。最大600%まで拡大できます。</p>
+      <div id="refineBrushCursor" class="refine-brush-cursor restore" aria-hidden="true"></div>
+      <p class="refine-help">丸い表示が実際のブラシ範囲です。スマホでは1本指で修正、2本指でドラッグすると画像を移動できます。最大600%まで拡大できます。</p>
       <div class="refine-dialog-actions">
         <button id="undoRefine" class="refine-secondary" type="button" disabled>1つ前へ</button>
         <button id="redoRefine" class="refine-secondary" type="button" disabled>1つ後へ</button>
@@ -239,6 +240,6 @@
       </div>
     </div>
   </dialog>
-  <script src="app.js?v=20260909-1"></script>
+  <script src="app.js?v=20260909-2"></script>
 </body>
 </html>
