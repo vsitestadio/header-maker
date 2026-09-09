@@ -224,9 +224,14 @@ function syncLayerTools() {
   $('#refineCutout').classList.toggle('hidden', !l.cutout);
   $('#restoreBackground').classList.toggle('hidden', !l.cutout);
   const anime=selectedCutoutMode()==='anime';
+  const mobileLightweight=anime&&isMobileCutoutDevice();
   $('#removeBackgroundAI').textContent=l.cutout
-    ?(anime?'全身を優先して切り抜き直す':'写真向けAIでやり直す')
-    :(anime?'全身を優先して切り抜く':'写真・人物を切り抜く');
+    ?(mobileLightweight
+      ?'スマホ向け軽量AIで切り抜き直す'
+      :(anime?'全身を優先して切り抜き直す':'写真向けAIでやり直す'))
+    :(mobileLightweight
+      ?'スマホ向け軽量AIで切り抜く'
+      :(anime?'全身を優先して切り抜く':'写真・人物を切り抜く'));
   $('#removeBackgroundAI').disabled=cutoutBusy;
   $('#refineCutout').disabled=cutoutBusy;
   $('#restoreBackground').disabled=cutoutBusy;
@@ -235,9 +240,11 @@ function syncLayerTools() {
       l.cutout
         ?'髪・服・体が消えたら「消えた部分を精密補正」で元画像から戻せます'
         :(anime
-          ?(selectedCutoutRetention()==='body'
-            ?'服や体を広めに残します。背景が残った部分だけ精密補正で消せます'
-            :'背景を優先してすっきり切り抜きます')
+          ?(mobileLightweight
+            ?'スマホ向け軽量AIで処理します。切り抜き後は精密補正で整えられます'
+            :(selectedCutoutRetention()==='body'
+              ?'服や体を広めに残します。背景が残った部分だけ精密補正で消せます'
+              :'背景を優先してすっきり切り抜きます'))
           :'写真や人物画像におすすめです'),
       l.cutout?'success':''
     )
@@ -459,15 +466,25 @@ function selectedCutoutMode() {
 function selectedCutoutRetention() {
   return document.querySelector('input[name="cutoutRetention"]:checked')?.value||'body'
 }
+function isMobileCutoutDevice() {
+  const mobileUserAgent=/Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const compactTouch=(
+    window.matchMedia('(pointer: coarse)').matches&&
+    window.matchMedia('(max-width: 1024px)').matches
+  );
+  return mobileUserAgent||compactTouch
+}
 function syncCutoutRetention() {
   all('.cutout-retention-option').forEach(label=> {
     label.classList.toggle('active', label.querySelector('input').checked)
   });
   if(selectedCutoutMode()==='anime'&&!cutoutBusy) {
     setCutoutStatus(
-      selectedCutoutRetention()==='body'
-        ?'服や体を広めに残します。背景が残った部分だけ精密補正で消せます'
-        :'背景を優先してすっきり切り抜きます。消えた部分は精密補正で戻せます'
+      isMobileCutoutDevice()
+        ?'スマホ向け軽量AIで処理します。切り抜き後は精密補正で整えられます'
+        :(selectedCutoutRetention()==='body'
+          ?'服や体を広めに残します。背景が残った部分だけ精密補正で消せます'
+          :'背景を優先してすっきり切り抜きます。消えた部分は精密補正で戻せます')
     )
   }
 }
@@ -478,7 +495,9 @@ function syncCutoutMode() {
   });
   $('#animeRetention').classList.toggle('hidden', !anime);
   $('#cutoutModeNote').textContent=anime
-    ?'全身優先では髪・服・体を広めに残します。処理に失敗した場合は、端末に合う互換モードで自動的にもう一度試します。'
+    ?(isMobileCutoutDevice()
+      ?'スマホでは軽量AIに自動で切り替え、端末への負担と処理失敗を抑えます。切り抜き後は精密補正で整えられます。'
+      :'全身優先では髪・服・体を広めに残します。処理に失敗した場合は、端末に合う互換モードで自動的にもう一度試します。')
     :'軽くて速い写真向けAIです。髪や服が消えた場合は精密補正で戻せます。';
   syncLayerTools();
   if(anime)syncCutoutRetention()
@@ -499,7 +518,7 @@ function setCutoutBusy(busy) {
 function makeProcessingCanvas(source, mode='photo') {
   const sourceWidth=source.naturalWidth||source.width;
   const sourceHeight=source.naturalHeight||source.height;
-  const mobile=window.matchMedia('(max-width: 700px)').matches;
+  const mobile=isMobileCutoutDevice();
   const maxSide=mode==='anime'
     ?(mobile?1200:1400)
     :(mobile?1600:2200);
@@ -652,7 +671,7 @@ async function disposeAnimeBackgroundRemoval(runtime) {
   }
 }
 async function releaseAnimeBackgroundRemoval(runtime) {
-  if(!window.matchMedia('(max-width: 700px)').matches)return;
+  if(!isMobileCutoutDevice())return;
   await disposeAnimeBackgroundRemoval(runtime)
 }
 function bodySafeAlpha(value) {
@@ -847,7 +866,33 @@ async function requestAnimeMask(runtime, objectUrl) {
     crop:prepared.crop
   }
 }
+async function preserveSoftBodyAlpha(blob) {
+  const result=await blobToCanvas(blob);
+  const resultContext=result.getContext('2d');
+  const pixels=resultContext.getImageData(0, 0, result.width, result.height);
+  for(let index=3; index<pixels.data.length; index+=4) {
+    pixels.data[index]=bodySafeAlpha(pixels.data[index])
+  }
+  resultContext.putImageData(pixels, 0, 0);
+  return canvasToBlob(result)
+}
+async function runMobileAnimeCutout(processingCanvas) {
+  const retainBody=selectedCutoutRetention()==='body';
+  const [removeBackground, inputBlob]=await Promise.all([
+    getBackgroundRemoval(),
+    canvasToBlob(processingCanvas)
+  ]);
+  setCutoutStatus('スマホ向け軽量AIで切り抜いています…', 'loading');
+  const result=await removeBackground(inputBlob, {
+    model:'isnet_quint8',
+    progress:updateCutoutProgress
+  });
+  return retainBody?preserveSoftBodyAlpha(result):result
+}
 async function runAnimeCutout(processingCanvas) {
+  if(isMobileCutoutDevice()) {
+    return runMobileAnimeCutout(processingCanvas)
+  }
   const retainBody=selectedCutoutRetention()==='body';
   const inputBlob=await canvasToBlob(processingCanvas);
   const objectUrl=URL.createObjectURL(inputBlob);
@@ -887,7 +932,7 @@ async function runPhotoCutout(processingCanvas) {
     canvasToBlob(processingCanvas)
   ]);
   return removeBackground(inputBlob, {
-    model:'isnet_fp16',
+    model:isMobileCutoutDevice()?'isnet_quint8':'isnet_fp16',
     progress:updateCutoutProgress
   })
 }
@@ -908,12 +953,21 @@ async function removeSelectedLayerBackground() {
   if(!layer||cutoutBusy)return;
   const layerId=layer.id;
   const mode=selectedCutoutMode();
+  const mobile=isMobileCutoutDevice();
+  const mobileLightweight=mode==='anime'&&mobile;
   const progress=$('#cutoutProgress');
   let completion=null;
   setCutoutBusy(true);
   progress.classList.remove('hidden');
   progress.removeAttribute('value');
-  setCutoutStatus(mode==='anime'?'イラスト精密AIを準備しています。初回は時間がかかります…':'写真向けAIを準備しています。初回のみ少し時間がかかります…', 'loading');
+  setCutoutStatus(
+    mode==='anime'
+      ?(mobileLightweight
+        ?'スマホ向け軽量AIを準備しています。初回のみ少し時間がかかります…'
+        :'イラスト精密AIを準備しています。初回は時間がかかります…')
+      :'写真向けAIを準備しています。初回のみ少し時間がかかります…',
+    'loading'
+  );
   try {
     const sourceCanvas=layer.originalImg||layer.img;
     const processingCanvas=makeProcessingCanvas(sourceCanvas, mode);
@@ -925,20 +979,23 @@ async function removeSelectedLayerBackground() {
     }
     progress.value=100;
     setCutoutStatus('透明な画像に仕上げています…', 'loading');
-    const resultCanvas=cutoutAtSourceResolution(await blobToCanvas(resultBlob), sourceCanvas);
+    const outputSource=mobile?processingCanvas:sourceCanvas;
+    const resultCanvas=cutoutAtSourceResolution(await blobToCanvas(resultBlob), outputSource);
     const target=state.layers.find(item=>item.id===layerId);
     if(!target)return;
     target.img=resultCanvas;
     target.url=makeThumbnail(resultCanvas);
     target.cutout=true;
-    target.cutoutSource=sourceCanvas;
+    target.cutoutSource=outputSource;
     renderLayers();
     draw();
     completion= {
       message:mode==='anime'
-        ?(selectedCutoutRetention()==='body'
-          ?'イラスト用AIで全身を広めに残しました。残った背景は精密補正で消せます'
-          :'イラスト用AIで背景を優先して切り抜きました')
+        ?(mobileLightweight
+          ?'スマホ向け軽量AIで切り抜きました。必要な部分は精密補正で整えられます'
+          :(selectedCutoutRetention()==='body'
+            ?'イラスト用AIで全身を広めに残しました。残った背景は精密補正で消せます'
+            :'イラスト用AIで背景を優先して切り抜きました'))
         :'背景を削除しました。消えた部分は精密補正で戻せます',
       type:'success'
     }
@@ -947,7 +1004,9 @@ async function removeSelectedLayerBackground() {
     console.error('Background removal failed:', error);
     completion= {
       message:mode==='anime'
-        ?'イラスト用AIで切り抜けませんでした。写真用AIには切り替えず、今回の結果は反映していません'
+        ?(mobileLightweight
+          ?'スマホ向け軽量AIで処理できませんでした。X内ブラウザの場合はSafariで開いて、もう一度お試しください'
+          :'イラスト用AIで切り抜けませんでした。写真用AIには切り替えず、今回の結果は反映していません')
         :'切り抜きに失敗しました。通信環境を確認して、もう一度お試しください',
       type:'error'
     }
