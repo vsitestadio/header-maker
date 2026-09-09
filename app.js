@@ -451,22 +451,48 @@ bindNumericRange('#rotation', '#rotationNumber', value=> {
 function bindNumericRange(rangeId, numberId, apply) {
   const range=$(rangeId), number=$(numberId);
   if(!range||!number)return;
-  const update=raw=> {
-    if(raw===null||raw===undefined||raw==='')return;
+  const normalize=raw=> {
+    if(raw===null||raw===undefined||String(raw).trim()==='')return null;
     const parsed=Number(raw);
-    if(!Number.isFinite(parsed))return;
+    if(!Number.isFinite(parsed))return null;
     const value=clamp(parsed, Number(range.min), Number(range.max));
-    const normalized=Number.isInteger(value)?String(value):String(Number(value.toFixed(3)));
-    range.value=normalized;
-    number.value=normalized;
-    apply(value)
+    return {
+      value,
+      text:Number.isInteger(value)?String(value):String(Number(value.toFixed(3)))
+    }
   };
-  range.oninput=e=>update(e.target.value);
-  number.oninput=e=>update(e.target.value);
-  number.onblur=()=> {
-    if(number.value==='')update(range.value)
+  const syncFromRange=raw=> {
+    const normalized=normalize(raw);
+    if(!normalized)return;
+    range.value=normalized.text;
+    number.value=normalized.text;
+    apply(normalized.value)
   };
-  update(range.value)
+  const commitNumber=raw=> {
+    const normalized=normalize(raw);
+    // Empty or incomplete values are allowed while typing, but revert to the
+    // last valid slider value when the field is committed.
+    syncFromRange(normalized?normalized.text:range.value)
+  };
+  range.oninput=e=>syncFromRange(e.target.value);
+  let firstFocus=true;
+  number.onfocus=()=> {
+    if(!firstFocus)return;
+    firstFocus=false;
+    requestAnimationFrame(()=>number.select());
+  };
+  number.onchange=e=>commitNumber(e.target.value);
+  number.onblur=e=> {
+    commitNumber(e.target.value);
+    firstFocus=true;
+  };
+  number.onkeydown=e=> {
+    if(e.key!=='Enter')return;
+    e.preventDefault();
+    commitNumber(e.currentTarget.value);
+    e.currentTarget.blur()
+  };
+  syncFromRange(range.value)
 }
 $('#flipX').onclick=()=> {
   const l=selectedLayer();
