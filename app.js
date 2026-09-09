@@ -768,7 +768,7 @@ async function requestAnimeMask(runtime, objectUrl) {
   const image=await runtime.RawImage.read(objectUrl);
   const processed=await runtime.processor(image);
   const output=await runtime.model({
-    input:processed.pixel_values
+    img:processed.pixel_values
   });
   const mask=output?.mask;
   if(!mask)throw new Error('イラスト精密AIの結果を取得できませんでした');
